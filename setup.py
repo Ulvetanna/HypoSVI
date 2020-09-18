@@ -80,7 +80,7 @@ def find_meta(meta):
 def setup_package():
     """Setup package"""
     setup(
-        name="EikoNet",
+        name="HypoSVI",
         version=VERSION,
         description=find_meta("description"),
         long_description=read("README.rst"),
@@ -95,7 +95,7 @@ def setup_package():
         install_requires=INSTALL_REQUIRES,
         include_package_data=True,
         include_dirs=INCLUDE_DIRS,
-        package_data={"EikoNet": ["lib/*.so"]})
+        package_data={"HypoSVI": ["lib/*.so"]})
 
 
 if __name__ == "__main__":
@@ -109,7 +109,7 @@ if __name__ == "__main__":
         except Exception:
             pass
         # delete all shared libs from lib directory
-        path = os.path.join(SETUP_DIRECTORY, 'EikoNet', 'lib')
+        path = os.path.join(SETUP_DIRECTORY, 'HypoSVI', 'lib')
         for filename in glob.glob(path + os.sep + '*.pyd'):
             try:
                 os.remove(filename)
