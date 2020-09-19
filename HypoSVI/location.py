@@ -209,7 +209,7 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['CataloguePlot']['Num Std to define errorbar']                                    = 2  #num_std
         self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']                     = [0.1,'r','*',0.8] # event_marker
         self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']         = [True,0.1,'r',0.8] # event_errorbar_marker
-        self.plot_info['CataloguePlot']['Station Marker - [On/Off(Bool),Size,Color,Names On/Off(Bool)]'] = [True,15,'b',True] # stations_plot
+        self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]']              = [15,'b',True] # stations_plot
         self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']                      = [0.1,'gray','-',1.0] # fault_plane
 
 
@@ -647,20 +647,20 @@ class HypoSVI(torch.nn.Module):
         plt.savefig('{}/{}.{}'.format(PATH,EventID,self.plot_info['EventPlot']['Save Type']))
 
 
-    def CataloguePlot(self,filepath=None,Events=None,user_xmin=[None,None,None],user_xmax=[None,None,None], faults=None):
+    def CataloguePlot(self,filepath=None,Events=None,Stations=None,user_xmin=[None,None,None],user_xmax=[None,None,None], Faults=None):
 
         if type(Events) != type(None):
             self.Events = Events
 
 
         # - Catalogue Plot parameters
-        min_phases      = self.plot_info['CataloguePlot']['Minimum Phase Picks']
-        max_uncertainty = self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']
+        min_phases            = self.plot_info['CataloguePlot']['Minimum Phase Picks']
+        max_uncertainty       = self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']
         num_std               =  self.plot_info['CataloguePlot']['Num Std to define errorbar']
         event_marker          = self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']
         event_errorbar_marker = self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']
-        stations_plot = self.plot_info['CataloguePlot']['Station Marker - [On/Off(Bool),Size,Color,Names On/Off(Bool)]'] 
-        fault_plane = self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']
+        stations_plot         = self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]'] 
+        fault_plane           = self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']
 
 
         fig = plt.figure(figsize=(15, 15))
@@ -698,17 +698,17 @@ class HypoSVI(torch.nn.Module):
 
 
         # Plotting the station locations
-        if stations_plot[0]:
+        if type(Stations) == str:
             sta = Stations[['Station','X','Y','Z']].drop_duplicates()
-            xy.scatter(sta['X'],sta['Y'],stations_plot[1], marker='^',color=stations_plot[2],label='Stations')
+            xy.scatter(sta['X'],sta['Y'],stations_plot[0], marker='^',color=stations_plot[1],label='Stations')
 
             if stations_plot[3]:
                 for i, txt in enumerate(sta['Station']):
                     xy.annotate(txt, (np.array(sta['X'])[i], np.array(sta['Y'])[i]))
 
 
-            xz.scatter(sta['X'],sta['Z'],stations_plot[1], marker='^',color=stations_plot[2])
-            yz.scatter(sta['Z'],sta['Y'],stations_plot[1], marker='<',color=stations_plot[2])
+            xz.scatter(sta['X'],sta['Z'],stations_plot[0], marker='^',color=stations_plot[1])
+            yz.scatter(sta['Z'],sta['Y'],stations_plot[0], marker='<',color=stations_plot[1])
 
 
         # Loading location information
