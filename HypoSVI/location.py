@@ -170,8 +170,6 @@ class HypoSVI(torch.nn.Module):
 
         # --------- Initialising Plotting Information ---------
         self.plot_info={}
-        
-        self.plot_info['CataloguePlot'] = {}
 
         # - Event Plot parameters
         # Location plotting
@@ -202,6 +200,25 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['EventPlot']['Traces']['Time Bounds']          = [0,5]
         self.plot_info['EventPlot']['Traces']['Pick linewidth']       = 2.0
         self.plot_info['EventPlot']['Traces']['Trace linewidth']      = 1.0
+
+
+        # - Catalogue Plot parameters
+        self.plot_info['CataloguePlot'] = {}
+        self.plot_info['CataloguePlot']['Minimum Phase Picks']                                           = 12 #min_phases
+        self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']                             = 15 #max_uncertainty
+        self.plot_info['CataloguePlot']['Num Std to define errorbar']                                    = 2  #num_std
+        self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']                     = [0.1,'r','*',0.8] # event_marker
+        self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']         = [True,0.1,'r',0.8] # event_errorbar_marker
+        self.plot_info['CataloguePlot']['Station Marker - [On/Off(Bool),Size,Color,Names On/Off(Bool)]'] = [True,15,'b',True] # stations_plot
+        self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']                      = [0.1,'gray','-',1.0] # fault_plane
+
+
+        faults                = '/content/Example_Cahuilla/datasets/socalfaults.llz.txt'
+        user_xmin             = [None,None,0]
+        user_xmax             = [None,None,20]
+
+
+
 
         # --- Defining variables and classes to be used
         self._σ_T       = None
@@ -630,70 +647,113 @@ class HypoSVI(torch.nn.Module):
         plt.savefig('{}/{}.{}'.format(PATH,EventID,self.plot_info['EventPlot']['Save Type']))
 
 
-    def CataloguePlot(self,filepath=None,Events=None,lim_min=None,lim_max=None,num_std=2,plot_errorbars=False,event_markerSize=0.1,min_phases=1,max_uncertainty=1000,ComparisonEvents=None):
+    def CataloguePlot(self,filepath=None,Events=None,user_xmin=[None,None,None],user_xmax=[None,None,None], faults=None):
 
-        if Events == None:
-            Events = self.Events
-
-        if lim_min == None:
-            lim_min = [self.VelocityClass.xmin[0],self.VelocityClass.xmin[1],self.VelocityClass.xmin[2]]
-        if lim_max == None:
-            lim_max = [self.VelocityClass.xmax[0],self.VelocityClass.xmax[1],self.VelocityClass.xmax[2]]
-
-        fig = plt.figure(figsize=(15,5))
-        ax  = fig.add_subplot(131)
-        ax.set_xlabel("X (km)")
-        ax.set_ylabel("Y (km)")
-        ax.set_xlim([lim_min[0],lim_max[0]])
-        ax.set_ylim([lim_min[1],lim_max[1]])
+        if type(Events) != type(None):
+            self.Events = Events
 
 
-        ax1  = fig.add_subplot(132)
-        ax1.set_xlabel("X (km)")
-        ax1.set_ylabel("Depth (km)")
-        ax1.set_xlim([lim_min[0],lim_max[0]])
-        ax1.set_ylim([lim_min[2],lim_max[2]])
-        ax1.invert_yaxis()
-        ax1.set_aspect('equal')
+        # - Catalogue Plot parameters
+        min_phases      = self.plot_info['CataloguePlot']['Minimum Phase Picks']
+        max_uncertainty = self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']
+        num_std               =  self.plot_info['CataloguePlot']['Num Std to define errorbar']
+        event_marker          = self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']
+        event_errorbar_marker = self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']
+        stations_plot = self.plot_info['CataloguePlot']['Station Marker - [On/Off(Bool),Size,Color,Names On/Off(Bool)]'] 
+        fault_plane = self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']
 
 
-        ax2  = fig.add_subplot(133)
-        ax2.set_xlabel("Y (km)")
-        ax2.set_ylabel("Depth (km)")
-        ax2.set_xlim([lim_min[1],lim_max[1]])
-        ax2.set_ylim([lim_min[2],lim_max[2]])
-        ax2.invert_yaxis()
-        ax2.set_aspect('equal')
+        fig = plt.figure(figsize=(15, 15))
+        xz  = plt.subplot2grid((3, 3), (2, 0), colspan=2)
+        xy  = plt.subplot2grid((3, 3), (0, 0), colspan=2, rowspan=2,sharex=xz)
+        yz  = plt.subplot2grid((3, 3), (0, 2), rowspan=2, sharey=xy) 
 
 
-        for evtid in Events.keys():
+        # Defining the limits of the domain
+        lim_min = self.VelocityClass.xmin
+        lim_max = self.VelocityClass.xmax
+
+        for indx,val in enumerate(user_xmin):
+            if val != None:
+                lim_min[indx] = val
+        for indx,val in enumerate(user_xmax):
+            if val != None:
+                lim_max[indx] = val
+
+        xy.set_xlim([lim_min[0],lim_max[0]])
+        xy.set_ylim([lim_min[1],lim_max[1]])
+        xz.set_xlim([lim_min[0],lim_max[0]])
+        xz.set_ylim([lim_min[2],lim_max[2]])
+        yz.set_xlim([lim_min[2],lim_max[2]])
+        yz.set_ylim([lim_min[1],lim_max[1]])
+
+        # Specifying the label names
+        xz.set_xlabel('UTM X (km)')
+        xz.set_ylabel('Depth (km)')
+        xz.invert_yaxis()
+        yz.set_ylabel('UTM Y (km)')
+        yz.yaxis.tick_right()
+        yz.yaxis.set_label_position("right")
+        yz.set_xlabel('Depth (km)')
+
+
+        # Plotting the station locations
+        if stations_plot[0]:
+            sta = Stations[['Station','X','Y','Z']].drop_duplicates()
+            xy.scatter(sta['X'],sta['Y'],stations_plot[1], marker='^',color=stations_plot[2],label='Stations')
+
+            if stations_plot[3]:
+                for i, txt in enumerate(sta['Station']):
+                    xy.annotate(txt, (np.array(sta['X'])[i], np.array(sta['Y'])[i]))
+
+
+            xz.scatter(sta['X'],sta['Z'],stations_plot[1], marker='^',color=stations_plot[2])
+            yz.scatter(sta['Z'],sta['Y'],stations_plot[1], marker='<',color=stations_plot[2])
+
+
+        # Loading location information
+        picks =(np.zeros((len(self.Events.keys()),8))*np.nan).astype(str)
+        for indx,evtid in enumerate(self.Events.keys()):
             try:
-
-                # Optional - Selecting only events witha  minimum number of phases
-                if len(Events[evtid]['Picks']) < min_phases:
-                        continue
-                loc     = Events[evtid]['location']['Hypocentre']
-                loc_err = Events[evtid]['location']['Hypocentre_std']*num_std
-
-                # Optional - Selecting only events less than a specific uncertainty
-                if np.sum(loc_err) > max_uncertainty:
-                    continue
-
-                if plot_errorbars:
-                    ax.errorbar(loc[0],loc[1],xerr=loc_err[0],yerr=loc_err[1],linewidth=0.1,color='k',alpha=0.5)
-                    ax1.errorbar(loc[0],loc[2],xerr=loc_err[0],yerr=loc_err[2],linewidth=0.1,color='k',alpha=0.5)
-                    ax2.errorbar(loc[1],loc[2],xerr=loc_err[1],yerr=loc_err[2],linewidth=0.1,color='k',alpha=0.5)
-                ax.scatter(loc[0],loc[1],event_markerSize,'k')
-                ax1.scatter(loc[0],loc[2],event_markerSize,'k')
-                ax2.scatter(loc[1],loc[2],event_markerSize,'k')
+                picks[indx,0]   = str(evtid)
+                picks[indx,1]   = self.Events[evtid]['location']['OriginTime']
+                picks[indx,2:5] = (np.array(self.Events[evtid]['location']['Hypocentre'])).astype(str)
+                picks[indx,5:]  = (np.array(self.Events[evtid]['location']['Hypocentre_std'])*num_std).astype(str)
             except:
-                continue        
+                continue
+        picks_df = pd.DataFrame(picks,
+                                columns=['EventID','DT','X','Y','Z','ErrX','ErrY','ErrZ'])
+        picks_df['X'] = picks_df['X'].astype(float)
+        picks_df['Y'] = picks_df['Y'].astype(float)
+        picks_df['Z'] = picks_df['Z'].astype(float)
+        picks_df['ErrX'] = picks_df['ErrX'].astype(float)
+        picks_df['ErrY'] = picks_df['ErrY'].astype(float)
+        picks_df['ErrZ'] = picks_df['ErrY'].astype(float)
+        picks_df = picks_df.dropna(axis=0)
+        picks_df = picks_df[np.sum(picks_df[['ErrX','ErrY','ErrZ']],axis=1) <= max_uncertainty].reset_index(drop=True)
+        picks_df['DT'] = pd.to_datetime(picks_df['DT'])
 
-        # Plotting Comaprison Events if specified 
-        if type(ComparisonEvents) != type(None):
-            ax.scatter(ComparisonEvents['X'],ComparisonEvents['Y'],event_markerSize,'r')
-            ax1.scatter(ComparisonEvents['X'],ComparisonEvents['Depth'],event_markerSize,'r')
-            ax2.scatter(ComparisonEvents['Y'],ComparisonEvents['Depth'],event_markerSize,'r')
+        # Plotting Location info
+        if event_errorbar_marker[0]:
+            xy.errorbar(picks_df['X'],picks_df['Y'],xerr=picks_df['ErrX'],yerr=picks_df['ErrY'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3],label='Catalogue Errorbars')
+            xz.errorbar(picks_df['X'],picks_df['Z'],xerr=picks_df['ErrX'],yerr=picks_df['ErrZ'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3])
+            yz.errorbar(picks_df['Z'],picks_df['Y'],xerr=picks_df['ErrZ'],yerr=picks_df['ErrY'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3])
+
+
+        xy.scatter(picks_df['X'],picks_df['Y'],event_marker[0],event_marker[1],marker=event_marker[2],alpha=event_marker[3],label='Catalogue Locations')
+        xz.scatter(picks_df['X'],picks_df['Z'],event_marker[0],event_marker[1],marker=event_marker[2],alpha=event_marker[3])
+        yz.scatter(picks_df['Z'],picks_df['Y'],event_marker[0],event_marker[1],marker=event_marker[2],alpha=event_marker[3])
+
+
+        # # Plotting Fault-planes
+        if type(faults) == str:
+          FAULTS = pd.read_csv(faults,sep=r'\s+',names=['Long','Lat','Z','iD'])
+          FAULTS = FAULTS.dropna(axis=0).reset_index(drop=True)
+          FAULTS['X'],FAULTS['Y'] = projection(np.array(FAULTS['Long']),np.array(FAULTS['Lat']))
+          xy.scatter(FAULTS['X'],FAULTS['Y'],fault_plane[0],color=fault_plane[1],linestyle=fault_plane[2],alpha=fault_plane[3],label='Mapped Faults')
+
+        # Plotting legend
+        xy.legend(loc='upper left',  markerscale=2, scatterpoints=1, fontsize=10)
 
         if filepath != None:
             plt.savefig('{}'.format(filepath))

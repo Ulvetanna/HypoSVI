@@ -36,7 +36,8 @@ INSTALL_REQUIRES = [
     'matplotlib',
     'pandas',
     'torch',
-    'sklearn']
+    'sklearn',
+    'obspy']
 
 
 def read(*parts):
