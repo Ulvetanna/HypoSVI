@@ -702,7 +702,7 @@ class HypoSVI(torch.nn.Module):
             sta = Stations[['Station','X','Y','Z']].drop_duplicates()
             xy.scatter(sta['X'],sta['Y'],stations_plot[0], marker='^',color=stations_plot[1],label='Stations')
 
-            if stations_plot[3]:
+            if stations_plot[2]:
                 for i, txt in enumerate(sta['Station']):
                     xy.annotate(txt, (np.array(sta['X'])[i], np.array(sta['Y'])[i]))
 
@@ -746,7 +746,7 @@ class HypoSVI(torch.nn.Module):
 
 
         # # Plotting Fault-planes
-        if type(faults) == str:
+        if type(Faults) == str:
           FAULTS = pd.read_csv(faults,sep=r'\s+',names=['Long','Lat','Z','iD'])
           FAULTS = FAULTS.dropna(axis=0).reset_index(drop=True)
           FAULTS['X'],FAULTS['Y'] = projection(np.array(FAULTS['Long']),np.array(FAULTS['Lat']))
