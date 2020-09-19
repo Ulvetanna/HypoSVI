@@ -698,7 +698,7 @@ class HypoSVI(torch.nn.Module):
 
 
         # Plotting the station locations
-        if type(Stations) == str:
+        if type(Stations) != type(None):
             sta = Stations[['Station','X','Y','Z']].drop_duplicates()
             xy.scatter(sta['X'],sta['Y'],stations_plot[0], marker='^',color=stations_plot[1],label='Stations')
 
