@@ -330,7 +330,7 @@ class HypoSVI(torch.nn.Module):
         self.optim.step()
 
 
-    def SyntheticCatalogue(self,input_file,Stations,save_path=None):
+    def SyntheticCatalogue(self,input_file,Stations,save_file=None):
         '''
             Determining synthetic travel-times between source and reciever locations, returning a JSON pick file for each event
 
