@@ -37,14 +37,8 @@ from torch.utils.data.sampler import SubsetRandomSampler,WeightedRandomSampler
 # Sklearn libraries
 from sklearn.cluster import DBSCAN
 
-
-
-# === Zach Suggestions ===
-# you might want to run this code through an auto formatter
-# to clean it up and make it look PEP8 compliant
-
-# -- Additional things that could be added
-# ---> Take-off Angles -- Further along the line.
+# Suppressing the warning 
+pd.options.mode.chained_assignment = None  # default='warn'
 
 class RBF(torch.nn.Module):
     ''' 
@@ -107,8 +101,6 @@ def IO_JSON(file,Events=None,rw_type='r'):
         return tmpEvents
 
 def IO_NLLoc2JSON(file,EVT={},startEventID=1000000):
-    import pandas as pd
-    import numpy as np
     # Reading in the lines
     f = open(file, "r")
     lines = f.readlines()
@@ -164,7 +156,7 @@ class HypoSVI(torch.nn.Module):
         self.location_info['Log-likehood']                         = 'EDT' 
         self.location_info['OriginTime Cluster - Seperation (s)']  = 0.3   
         self.location_info['OriginTime Cluster - Minimum Samples'] = 3     
-        self.location_info['Hypocenter Cluster - Seperation (km)'] = 3     
+        self.location_info['Hypocenter Cluster - Seperation (km)'] = 0.5      
         self.location_info['Hypocenter Cluster - Minimum Samples'] = 3     
         self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,0.5] 
         self.location_info['Individual Event Epoch Print Rate']    = None
@@ -217,19 +209,12 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]']              = [15,'b',True] # stations_plot
         self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']                      = [0.1,'gray','-',1.0] # fault_plane
 
-
-        faults                = '/content/Example_Cahuilla/datasets/socalfaults.llz.txt'
-        user_xmin             = [None,None,0]
-        user_xmax             = [None,None,20]
-
-
-
-
         # --- Defining variables and classes to be used
         self._σ_T       = None
         self._optimizer = None
         self._orgTime   = None
         self.K          = RBF()
+        self.K.sigma    = 17.5
 
 
     def locVar(self,T_obs,T_obs_err):
