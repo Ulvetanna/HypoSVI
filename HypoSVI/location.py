@@ -55,6 +55,7 @@ class RBF(torch.nn.Module):
     def __init__(self, sigma=None):
         super(RBF, self).__init__()
         self.sigma = sigma
+        self.print_sigma = False
 
     def forward(self, X, Y):
         XX = X.matmul(X.t())
@@ -68,6 +69,10 @@ class RBF(torch.nn.Module):
             np_dnorm2 = dnorm2.detach().cpu().numpy()
             h = np.median(np_dnorm2) / (2 * np.log(X.size(0) + 1))
             sigma = np.sqrt(h).item()
+
+            if self.print_sigma:
+                print(sigma)
+
         else:
             sigma = self.sigma
 
@@ -305,7 +310,9 @@ class HypoSVI(torch.nn.Module):
 
 
         # calculating the time offset
+        T_pred[T_pred != T_pred] = 0
         flt_timediff = (abs(T_pred - T_obs).flatten()).detach().cpu().numpy()
+
         clustering   = DBSCAN(eps=self.location_info['OriginTime Cluster - Seperation (s)'], min_samples=self.location_info['OriginTime Cluster - Minimum Samples']).fit(flt_timediff[None,:])
         indx         = np.where(clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1))[0]
 
