@@ -740,6 +740,8 @@ class HypoSVI(torch.nn.Module):
         # # Plotting Fault-planes
         if type(Faults) == str:
           FAULTS = pd.read_csv(Faults,sep=r'\s+',names=['X','Y'])
+          FAULTS = FAULTS[(FAULTS['X']>=lim_min[0]) & (FAULTS['X']<=lin_max[0]) & (FAULTS['Y']>=lim_min[1]) & (FAULTS['Y']<=lim_min[1])].reset_index(drop=True)
+
           xy.scatter(FAULTS['X'],FAULTS['Y'],fault_plane[0],color=fault_plane[1],linestyle=fault_plane[2],alpha=fault_plane[3],label='Mapped Faults')
 
         # Plotting legend
