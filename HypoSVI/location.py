@@ -197,23 +197,27 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['EventPlot']['Traces']['Pick linewidth']       = 2.0
         self.plot_info['EventPlot']['Traces']['Trace linewidth']      = 1.0
 
-
         # - Catalogue Plot parameters
         self.plot_info['CataloguePlot'] = {}
-        self.plot_info['CataloguePlot']['Minimum Phase Picks']                                           = 12 #min_phases
-        self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']                             = 15 #max_uncertainty
-        self.plot_info['CataloguePlot']['Num Std to define errorbar']                                    = 2  #num_std
-        self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']                     = [0.1,'r','*',0.8] # event_marker
-        self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']         = [True,0.1,'r',0.8] # event_errorbar_marker
-        self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]']              = [15,'b',True] # stations_plot
-        self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']                      = [0.1,'gray','-',1.0] # fault_plane
+        self.plot_info['CataloguePlot']['Minimum Phase Picks']                                           = 12
+        self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']                             = 15
+        self.plot_info['CataloguePlot']['Num Std to define errorbar']                                    = 2
+        self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']                     = [0.1,'r','*',0.8]
+        self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']         = [True,0.1,'r',0.8]
+        self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]']              = [15,'b',True]
+        self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']                      = [0.1,'gray','-',1.0]
 
-        # --- Defining variables and classes to be used
+        
+        # ----- Kernel Information ----
+        self.K          = RBF()
+        self.K.sigma    = 17.5
+
+
+
+        # --- Variables that are updated in run-time
         self._σ_T       = None
         self._optimizer = None
         self._orgTime   = None
-        self.K          = RBF()
-        self.K.sigma    = 17.5
 
 
     def locVar(self,T_obs,T_obs_err):
@@ -365,7 +369,6 @@ class HypoSVI(torch.nn.Module):
             Saving Events in CSV format
         '''
 
-
         if type(EVT) == type(None):
             Events = self.Events
         else:
@@ -393,7 +396,7 @@ class HypoSVI(torch.nn.Module):
         picks_df['DT'] = pd.to_datetime(picks_df['DT'])
 
         if type(EVT) == type(None):
-            return pick_df
+            return picks_df
         else:
             picks_df.to_csv(savefile,index=False)
 
