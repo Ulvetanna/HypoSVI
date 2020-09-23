@@ -396,7 +396,6 @@ class HypoSVI(torch.nn.Module):
         picks_df['DT'] = pd.to_datetime(picks_df['DT'])
 
         if projection != None:
-            df.pop('class')
             picks_df['Long'],picks_df['Lat'] = projection(np.array(FAULTS['X']),np.array(FAULTS['Y']),inverse=True)
             picks_df = picks_df[['EventID','DT','Long','Lat','Z','StdX','StdY','StdZ']]
         else:
