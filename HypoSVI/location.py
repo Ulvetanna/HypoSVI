@@ -364,7 +364,7 @@ class HypoSVI(torch.nn.Module):
         return EVT
 
 
-    def Events2CSV(self,EVT=None,savefile=None):
+    def Events2CSV(self,EVT=None,savefile=None,projection=None):
         '''
             Saving Events in CSV format
         '''
@@ -388,12 +388,20 @@ class HypoSVI(torch.nn.Module):
                                 columns=['EventID','DT','X','Y','Z','StdX','StdY','StdZ'])
         picks_df['X'] = picks_df['X'].astype(float)
         picks_df['Y'] = picks_df['Y'].astype(float)
-        picks_df['Z'] = picks_df['Z'].astype(float)
+        picks_df['Z']    = picks_df['Z'].astype(float)
         picks_df['StdX'] = picks_df['StdX'].astype(float)
         picks_df['StdY'] = picks_df['StdY'].astype(float)
         picks_df['StdZ'] = picks_df['StdZ'].astype(float)
         picks_df = picks_df.dropna(axis=0)
         picks_df['DT'] = pd.to_datetime(picks_df['DT'])
+
+        if projection != None:
+            df.pop('class')
+            picks_df['Long'],picks_df['Lat'] = projection(np.array(FAULTS['X']),np.array(FAULTS['Y']),inverse=True)
+            picks_df = picks_df[['EventID','DT','Long','Lat','Z','StdX','StdY','StdZ']]
+        else:
+            picks_df = picks_df[['EventID','DT','X','Y','Z','StdX','StdY','StdZ']]
+
 
         if type(savefile) == type(None):
             return picks_df
