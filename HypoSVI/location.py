@@ -395,7 +395,7 @@ class HypoSVI(torch.nn.Module):
         picks_df = picks_df.dropna(axis=0)
         picks_df['DT'] = pd.to_datetime(picks_df['DT'])
 
-        if type(EVT) == type(None):
+        if type(savefile) == type(None):
             return picks_df
         else:
             picks_df.to_csv(savefile,index=False)
