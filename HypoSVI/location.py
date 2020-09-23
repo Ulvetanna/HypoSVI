@@ -368,6 +368,8 @@ class HypoSVI(torch.nn.Module):
 
         if type(EVT) == type(None):
             Events = self.Events
+        else:
+            Events = EVT
 
         # Loading location information
         picks =(np.zeros((len(Events.keys()),8))*np.nan).astype(str)
