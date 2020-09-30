@@ -155,12 +155,12 @@ class HypoSVI(torch.nn.Module):
         self.location_info['Log-likehood']                         = 'EDT' 
         self.location_info['OriginTime Cluster - Seperation (s)']  = 0.3   
         self.location_info['OriginTime Cluster - Minimum Samples'] = 3     
-        self.location_info['Hypocenter Cluster - Seperation (km)'] = 10.      
+        self.location_info['Hypocenter Cluster - Seperation (km)'] = 0.5      
         self.location_info['Hypocenter Cluster - Minimum Samples'] = 3     
         self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,0.5] 
         self.location_info['Individual Event Epoch Print Rate']    = None
         self.location_info['Number of Particles']                  = 250 
-        self.location_info['Step Size']                            = 1 
+        self.location_info['Step Size']                            = 5e0 
         self.location_info['Save every * events']                  = 10
 
 
@@ -473,6 +473,7 @@ class HypoSVI(torch.nn.Module):
             # -- Determining the dominant cluster of points and estimating hypocentre 
             clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
             indx = np.where(clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1))[0]
+            print(indx)
             optHyp              = torch.mean(X_src[indx,:], dim=0)
             optHyp_std          = torch.std(X_src[indx,:], dim=0)
             Ev['location']['SVGD_points_clusterindx']    = indx.tolist()
