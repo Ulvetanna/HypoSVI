@@ -550,7 +550,7 @@ class HypoSVI(torch.nn.Module):
             cov     = np.sqrt(abs(kde.covariance))
             Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
             Ev['location']['Hypocentre']     = (pts[:,np.argmax(stats.gaussian_kde(pts)(pts))]).tolist()
-            #Ev['location']['Hypocentre_std'] = np.array([cov[0,0],cov[1,1],cov[2,2]]).tolist()
+            Ev['location']['Hypocentre_std'] = np.array([cov[0,0],cov[1,1],cov[2,2]]).tolist()
 
 
             # JDS: === Depricated NLLoc Origin Time Method ===
