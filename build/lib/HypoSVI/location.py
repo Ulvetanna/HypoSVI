@@ -155,12 +155,12 @@ class HypoSVI(torch.nn.Module):
         self.location_info['Log-likehood']                         = 'EDT' 
         self.location_info['OriginTime Cluster - Seperation (s)']  = 0.3   
         self.location_info['OriginTime Cluster - Minimum Samples'] = 3     
-        self.location_info['Hypocenter Cluster - Seperation (km)'] = 0.5      
+        self.location_info['Hypocenter Cluster - Seperation (km)'] = 10.      
         self.location_info['Hypocenter Cluster - Minimum Samples'] = 3     
         self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,0.5] 
         self.location_info['Individual Event Epoch Print Rate']    = None
         self.location_info['Number of Particles']                  = 250 
-        self.location_info['Step Size']                            = 5e0 
+        self.location_info['Step Size']                            = 1 
         self.location_info['Save every * events']                  = 10
 
 
@@ -298,15 +298,14 @@ class HypoSVI(torch.nn.Module):
 
 
         # calculating the time offset
-        T_pred[T_pred != T_pred] = 0
         flt_timediff = (abs(T_pred - T_obs).flatten()).detach().cpu().numpy()
 
         clustering   = DBSCAN(eps=self.location_info['OriginTime Cluster - Seperation (s)'], min_samples=self.location_info['OriginTime Cluster - Minimum Samples']).fit(flt_timediff[None,:])
         indx         = np.where(clustering.labels_ == np.argmax(np.bincount(clustering.labels_+1))-1)[0]
 
         self.samples_timeDiff           = (T_obs - (T_pred-np.mean(flt_timediff[indx]))).detach().cpu().numpy()
-        self.originoffset_mean          = np.mean(flt_timediff[indx])
-        self.originoffset_std           = np.std(flt_timediff[indx])
+        self.originoffset_mean          = np.nanmedian(flt_timediff[indx])
+        self.originoffset_std           = np.nanstd(flt_timediff[indx])
         self.HypocentreSample_timediff  = (self.samples_timeDiff[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:])
         self.HypocentreSample_loc       = (X_src[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:]).detach().cpu().numpy()
 
@@ -316,6 +315,37 @@ class HypoSVI(torch.nn.Module):
         self.optim.zero_grad()
         X_src.grad = -self.phi(X_src, X_rec, T_obs, T_obs_err, T_phase)
         self.optim.step()
+
+    def _compute_origin(Tobs,X_rec,Hyp):
+        '''
+            Internal function to compute origin time and predicted travel-times from Obs and Predicted travel-times
+        '''
+
+
+        # Determining the predicted travel-time for the different phases
+        n_obs = 0
+        cc=0
+        for ind,phs in enumerate(self.eikonet_Phases):
+            phase_index = np.where(t_phase==phs)[0]
+            if len(phase_index) != 0:
+                pha_X_inp     = torch.cat([Hyp[None,:].repeat(len(phase_index),dim=0), X_rec[phase_index,:]], dim=1)
+                pha_T_obs     = Tobs[phase_index]
+                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp)
+
+                if cc == 0:
+                    T_obs     = pha_T_obs
+                    T_pred    = pha_T_pred
+                    cc+=1
+                else:
+                    T_obs     = torch.cat([T_obs,pha_T_obs],dim=1)
+                    T_pred    = torch.cat([T_pred,pha_T_pred],dim=1)
+
+        OT      = np.nanmean((T_pred - Tobs).cpu().numpy())
+        OT_std  = np.nanstd((T_pred - Tobs).cpu().numpy())
+        pick_TD = (T_pred - OT) - T_obs
+
+        return OT,OT_std,pick_TD
+
 
 
     def SyntheticCatalogue(self,input_file,Stations,save_file=None):
@@ -422,7 +452,7 @@ class HypoSVI(torch.nn.Module):
             Ev['Picks']['Station']   = Ev['Picks']['Station'].astype(str)
             Ev['Picks']['PhasePick'] = Ev['Picks']['PhasePick'].astype(str)
             Ev['Picks']['DT']        = pd.to_datetime(Ev['Picks']['DT'])
-            Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)
+            Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)*3 #99.73 percentile
 
             # printing the current event being run
             print('Processing Event:{} - Event {} of {} - Number of observtions={}'.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
@@ -473,19 +503,27 @@ class HypoSVI(torch.nn.Module):
             # -- Determining the dominant cluster of points and estimating hypocentre 
             clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
             indx = np.where(clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1))[0]
-            print(indx)
             optHyp              = torch.mean(X_src[indx,:], dim=0)
             optHyp_std          = torch.std(X_src[indx,:], dim=0)
             Ev['location']['SVGD_points_clusterindx']    = indx.tolist()
             Ev['location']['SVGD_SampleTimeDifferences'] = (self.samples_timeDiff).tolist()
             Ev['location']['Hypocentre']                 = optHyp.detach().cpu().numpy().tolist()
             Ev['location']['Hypocentre_std']             = optHyp_std.detach().cpu().numpy().tolist()
-            Ev['location']['Hypocentre_optimalsample']   = (self.HypocentreSample_loc).tolist()
-            Ev['location']['OriginTime_std']             = float(self.originoffset_std)
-            Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(self.originoffset_mean),unit='S'))
-            Ev['Picks']['TimeDiff']                      = self.HypocentreSample_timediff 
+            
+            # Ev['location']['Hypocentre_optimalsample']   = (self.HypocentreSample_loc).tolist()
+            # Ev['location']['OriginTime_std']             = float(self.originoffset_std)
+            # Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(self.originoffset_mean),unit='S'))
+            # Ev['Picks']['TimeDiff']                      = self.HypocentreSample_timediff 
 
-            print('-------- OT= {} - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
+
+
+            originOffset,originOffset_std,pick_TD = self._compute_origin(T_obs,X_rec,Tensor(Ev['location']['Hypocentre']).to(device))
+            #Ev['location']['Hypocentre_optimalsample']   = (self.HypocentreSample_loc).tolist()
+            Ev['location']['OriginTime_std']             = float(originOffset_std)
+            Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(originOffset),unit='S'))
+            Ev['Picks']['TimeDiff']                      = pick_TD 
+
+            print('-------- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
                                                                                   Ev['location']['Hypocentre_std'][0],Ev['location']['Hypocentre_std'][1],Ev['location']['Hypocentre_std'][2]))
 
             if output_plots:

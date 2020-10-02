@@ -24,6 +24,8 @@ import sys
 import json
 import copy
 from string import digits
+from scipy import stats
+import time
 
 # Pytorch Libraires
 import torch
@@ -33,12 +35,14 @@ from torch.nn import MSELoss
 from torch.optim import SGD, Adam, RMSprop
 from torch.autograd import Variable, grad
 from torch.utils.data.sampler import SubsetRandomSampler,WeightedRandomSampler
+from torch.cuda.amp import autocast
+
 
 # Sklearn libraries
 from sklearn.cluster import DBSCAN
-
 # Suppressing the warning 
 pd.options.mode.chained_assignment = None  # default='warn'
+
 
 class RBF(torch.nn.Module):
     ''' 
@@ -152,16 +156,14 @@ class HypoSVI(torch.nn.Module):
 
         # -- Defining the parameters required in the earthquake location procedure
         self.location_info = {}
-        self.location_info['Log-likehood']                         = 'EDT' 
-        self.location_info['OriginTime Cluster - Seperation (s)']  = 0.3   
-        self.location_info['OriginTime Cluster - Minimum Samples'] = 3     
-        self.location_info['Hypocenter Cluster - Seperation (km)'] = 10.      
-        self.location_info['Hypocenter Cluster - Minimum Samples'] = 3     
-        self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,0.5] 
+        self.location_info['Log-likehood']                         = 'EDT'      
+        self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,2.0] 
         self.location_info['Individual Event Epoch Print Rate']    = None
-        self.location_info['Number of Particles']                  = 250 
-        self.location_info['Step Size']                            = 1 
-        self.location_info['Save every * events']                  = 10
+        self.location_info['Number of Particles']                  = 150 
+        self.location_info['Step Size']                            = 1 #1
+        self.location_info['Save every * events']                  = 1000
+        self.location_info['Hypocenter Cluster - Seperation (km)'] = 0.8      
+        self.location_info['Hypocenter Cluster - Minimum Samples'] = 5
 
 
         # --------- Initialising Plotting Information ---------
@@ -220,6 +222,11 @@ class HypoSVI(torch.nn.Module):
         self._orgTime   = None
 
 
+        # --- Depricated
+        #self.location_info['OriginTime Cluster - Seperation (s)']  = 0.3   
+        #self.location_info['OriginTime Cluster - Minimum Samples'] = 3     
+
+
     def locVar(self,T_obs,T_obs_err):
         '''
             Applying variance from Pick and Distance weighting to each of the observtions
@@ -247,6 +254,7 @@ class HypoSVI(torch.nn.Module):
         return logL
     
     def phi(self, X_src, X_rec, t_obs,t_obs_err,t_phase):
+
         # Setting up the gradient requirements
         X_src = X_src.detach().requires_grad_(True)
 
@@ -257,10 +265,12 @@ class HypoSVI(torch.nn.Module):
         X_src[:,0] = torch.clamp(X_src[:,0],self.VelocityClass.xmin[0],self.VelocityClass.xmax[0])
         X_src[:,1] = torch.clamp(X_src[:,1],self.VelocityClass.xmin[1],self.VelocityClass.xmax[1])
         X_src[:,2] = torch.clamp(X_src[:,2],self.VelocityClass.xmin[2],self.VelocityClass.xmax[2])
+        
 
         # Determining the predicted travel-time for the different phases
         n_obs = 0
         cc=0
+        
         for ind,phs in enumerate(self.eikonet_Phases):
             phase_index = np.where(t_phase==phs)[0]
             if len(phase_index) != 0:
@@ -269,7 +279,6 @@ class HypoSVI(torch.nn.Module):
                 pha_X_inp     = torch.cat([X_src.repeat_interleave(len(phase_index), dim=0), X_rec[phase_index,:].repeat(n_particles, 1)], dim=1)
                 pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp).reshape(n_particles,len(phase_index))
 
-                
                 if cc == 0:
                     n_obs     = len(phase_index)
                     T_obs     = pha_T_obs
@@ -281,9 +290,10 @@ class HypoSVI(torch.nn.Module):
                     T_obs     = torch.cat([T_obs,pha_T_obs],dim=1)
                     T_obs_err = torch.cat([T_obs_err,pha_T_obs_err],dim=1)
                     T_pred    = torch.cat([T_pred,pha_T_pred],dim=1)
-
-        self.locVar(T_obs,T_obs_err)
         
+
+        
+        self.locVar(T_obs,T_obs_err)
         log_L     = self.log_L(T_pred,T_obs,self._σ_T)
         log_prob  = log_L.sum()
         score_func = torch.autograd.grad(log_prob, X_src)[0]
@@ -296,19 +306,16 @@ class HypoSVI(torch.nn.Module):
         # Setting Misfit to zero to restart
         self._σ_T     = None
 
-
         # calculating the time offset
-        T_pred[T_pred != T_pred] = 0
-        flt_timediff = (abs(T_pred - T_obs).flatten()).detach().cpu().numpy()
-
-        clustering   = DBSCAN(eps=self.location_info['OriginTime Cluster - Seperation (s)'], min_samples=self.location_info['OriginTime Cluster - Minimum Samples']).fit(flt_timediff[None,:])
-        indx         = np.where(clustering.labels_ == np.argmax(np.bincount(clustering.labels_+1))-1)[0]
-
-        self.samples_timeDiff           = (T_obs - (T_pred-np.mean(flt_timediff[indx]))).detach().cpu().numpy()
-        self.originoffset_mean          = np.mean(flt_timediff[indx])
-        self.originoffset_std           = np.std(flt_timediff[indx])
-        self.HypocentreSample_timediff  = (self.samples_timeDiff[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:])
-        self.HypocentreSample_loc       = (X_src[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:]).detach().cpu().numpy()
+        # JDS: === Depricated NLLoc Origin Time Method ===
+        # flt_timediff = (abs(T_pred - T_obs).flatten()).detach().cpu().numpy()
+        # clustering   = DBSCAN(eps=self.location_info['OriginTime Cluster - Seperation (s)'], min_samples=self.location_info['OriginTime Cluster - Minimum Samples']).fit(flt_timediff[None,:])
+        # indx         = np.where(clustering.labels_ == np.argmax(np.bincount(clustering.labels_+1))-1)[0]
+        # self.samples_timeDiff           = (T_obs - (T_pred-np.mean(flt_timediff[indx]))).detach().cpu().numpy()
+        # self.originoffset_mean          = np.nanmedian(flt_timediff[indx])
+        # self.originoffset_std           = np.nanstd(flt_timediff[indx])
+        # self.HypocentreSample_timediff  = (self.samples_timeDiff[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:])
+        # self.HypocentreSample_loc       = (X_src[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:]).detach().cpu().numpy()
 
         return phi
 
@@ -316,6 +323,36 @@ class HypoSVI(torch.nn.Module):
         self.optim.zero_grad()
         X_src.grad = -self.phi(X_src, X_rec, T_obs, T_obs_err, T_phase)
         self.optim.step()
+
+    def _compute_origin(self,Tobs,t_phase,X_rec,Hyp):
+        '''
+            Internal function to compute origin time and predicted travel-times from Obs and Predicted travel-times
+        '''
+
+        # Determining the predicted travel-time for the different phases
+        n_obs = 0
+        cc=0
+        for ind,phs in enumerate(self.eikonet_Phases):
+            phase_index = np.where(t_phase==phs)[0]
+            if len(phase_index) != 0:
+                pha_X_inp     = torch.cat([torch.repeat_interleave(Hyp[None,:],len(phase_index),dim=0), X_rec[phase_index,:]], dim=1)
+                pha_T_obs     = Tobs[phase_index]
+                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp)
+
+                if cc == 0:
+                    T_obs     = pha_T_obs
+                    T_pred    = pha_T_pred
+                    cc+=1
+                else:
+                    T_obs     = torch.cat([T_obs,pha_T_obs])
+                    T_pred    = torch.cat([T_pred,pha_T_pred])
+
+        OT      = np.median((T_pred - Tobs).detach().cpu().numpy())
+        OT_std  = np.nanstd((T_pred - Tobs).detach().cpu().numpy())
+        pick_TD = ((T_pred - OT) - T_obs).detach().cpu().numpy()
+
+        return OT,OT_std,pick_TD
+
 
 
     def SyntheticCatalogue(self,input_file,Stations,save_file=None):
@@ -409,10 +446,35 @@ class HypoSVI(torch.nn.Module):
 
 
 
-    def LocateEvents(self,EVTS,Stations,epochs=200,output_plots=True,output_path=None):
+    def LocateEvents(self,EVTS,Stations,output_path,epochs=175,output_plots=False,timer=False):
         self.Events      = EVTS
 
+        print('============================================================================================================')
+        print('============================================================================================================')
+        print('========================================= HYPOSVI - Earthquake Location ====================================')
+        print('============================================================================================================')
+        print('============================================================================================================')
+        print('\n')
+        print('      Procssing for {} Events  - Starting DateTime {}'.format(len(EVTS.keys()),time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))))
+        print('      Output Folder = {}'.format(output_path))
+        print('\n')
+        print('======== Location Settings:')
+        print(json.dumps(self.location_info, indent=2, sort_keys=True))
+
+        print('\n')
+
+        if output_plots:
+            print('======== Plotting Settings:')
+            print(json.dumps(self.plot_info['EventPlot'], indent=2, sort_keys=True))
+            print('\n')        
+        print('============================================================================================================')
+        print('============================================================================================================')
+
+
         for c,ev in enumerate(self.Events.keys()):
+            if timer == True:
+                timer_start = time.time()
+
 
             # Determining the event to look at
             Ev = self.Events[ev]
@@ -422,10 +484,10 @@ class HypoSVI(torch.nn.Module):
             Ev['Picks']['Station']   = Ev['Picks']['Station'].astype(str)
             Ev['Picks']['PhasePick'] = Ev['Picks']['PhasePick'].astype(str)
             Ev['Picks']['DT']        = pd.to_datetime(Ev['Picks']['DT'])
-            Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)
+            Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)*2
 
             # printing the current event being run
-            print('Processing Event:{} - Event {} of {} - Number of observtions={}'.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
+            print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
 
             # Adding the station location to the pick files
             pick_info = pd.merge(Ev['Picks'],Stations[['Network','Station','X','Y','Z']])
@@ -449,6 +511,7 @@ class HypoSVI(torch.nn.Module):
             l = None
             losses = []
             best_l = np.inf
+            #with autocast():
             for epoch in range(epochs):
                 self.optim.zero_grad()
 
@@ -470,33 +533,70 @@ class HypoSVI(torch.nn.Module):
                  Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
                  continue
 
-            # -- Determining the dominant cluster of points and estimating hypocentre 
+            # # -- Determining the dominant cluster of points and estimating hypocentre 
+            # clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
+            # indx = np.where(clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1))[0]
+            # optHyp              = torch.mean(X_src[indx,:], dim=0)
+            # optHyp_std          = torch.std(X_src[indx,:], dim=0)
+            # Ev['location']['SVGD_points_clusterindx']    = indx.tolist()
+            # Ev['location']['Hypocentre']                 = optHyp.detach().cpu().numpy().tolist()
+            # Ev['location']['Hypocentre_std']             = optHyp_std.detach().cpu().numpy().tolist()
+            
             clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
-            indx = np.where(clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1))[0]
-            optHyp              = torch.mean(X_src[indx,:], dim=0)
-            optHyp_std          = torch.std(X_src[indx,:], dim=0)
-            Ev['location']['SVGD_points_clusterindx']    = indx.tolist()
-            Ev['location']['SVGD_SampleTimeDifferences'] = (self.samples_timeDiff).tolist()
-            Ev['location']['Hypocentre']                 = optHyp.detach().cpu().numpy().tolist()
-            Ev['location']['Hypocentre_std']             = optHyp_std.detach().cpu().numpy().tolist()
-            Ev['location']['Hypocentre_optimalsample']   = (self.HypocentreSample_loc).tolist()
-            Ev['location']['OriginTime_std']             = float(self.originoffset_std)
-            Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(self.originoffset_mean),unit='S'))
-            Ev['Picks']['TimeDiff']                      = self.HypocentreSample_timediff 
+            indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1)))[0]
+            pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
+            kde     = stats.gaussian_kde(pts)
+            pdf     = kde.pdf(pts)
+            cov     = np.sqrt(abs(kde.covariance))
+            Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
+            Ev['location']['Hypocentre']     = (pts[:,np.argmax(stats.gaussian_kde(pts)(pts))]).tolist()
+            #Ev['location']['Hypocentre_std'] = np.array([cov[0,0],cov[1,1],cov[2,2]]).tolist()
 
-            print('-------- OT= {} - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
+
+            # JDS: === Depricated NLLoc Origin Time Method ===
+            # Ev['location']['Hypocentre_optimalsample']   = (self.HypocentreSample_loc).tolist()
+            # Ev['location']['OriginTime_std']             = float(self.originoffset_std)
+            # Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(self.originoffset_mean),unit='S'))
+            # Ev['Picks']['TimeDiff']                      = self.HypocentreSample_timediff 
+            # Ev['location']['SVGD_SampleTimeDifferences'] = (self.samples_timeDiff).tolist()
+
+            originOffset,originOffset_std,pick_TD = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
+            Ev['location']['OriginTime_std']             = float(originOffset_std)
+            Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(originOffset),unit='S'))
+            Ev['Picks']['TimeDiff']                      = pick_TD 
+
+            print('---- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
                                                                                   Ev['location']['Hypocentre_std'][0],Ev['location']['Hypocentre_std'][1],Ev['location']['Hypocentre_std'][2]))
 
+            if timer == True:
+                timer_end = time.time()
+                print('Processing took {}s'.format(timer_end-timer_start))
+
+
+            # Plotting Event plots
             if output_plots:
-                print('-------- Saving Event Plot --------')
+                if timer == True:
+                    timer_start = time.time()
+                print('---- Saving Event Plot ----')
                 try:
                     self.EventPlot(output_path,Ev,EventID=ev)
                 except:
-                    print('-------- Issue with saving plot !  --------')
+                    print('----Issue with saving plot !  ----')
 
-            if self.location_info['Save every * events']  != None:
-                if (c%self.location_info['Save every * events']) == 0:
-                    IO_JSON('{}/Catalogue.json'.format(output_path),Events=self.Events,rw_type='w')
+                if timer == True:
+                    timer_end = time.time()
+                    print('Plotting took {}s'.format(timer_end-timer_start))
+
+            # Saving Catalogue instance
+            if (self.location_info['Save every * events']  != None) and ((c%self.location_info['Save every * events']) == 0):
+                if timer == True:
+                    timer_start = time.time()
+                print('---- Saving Catalogue instance ----')
+                IO_JSON('{}/Catalogue.json'.format(output_path),Events=self.Events,rw_type='w')
+                if timer == True:
+                    timer_end = time.time()
+                    print('Saving took {}s'.format(timer_end-timer_start))
+
 
         # Writing out final catalogue
         IO_JSON('{}/Catalogue.json'.format(output_path),Events=self.Events,rw_type='w')
