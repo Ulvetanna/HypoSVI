@@ -134,6 +134,46 @@ def IO_NLLoc2JSON(file,EVT={},startEventID=1000000):
     return EVT
 
 
+def IO_JSON2CSV(EVT,savefile=None):
+    '''
+        Saving Events in CSV format
+    '''
+
+    Events = EVT
+
+    # Loading location information
+    picks =(np.zeros((len(Events.keys()),8))*np.nan).astype(str)
+    for indx,evtid in enumerate(Events.keys()):
+        try:
+            picks[indx,0]   = str(evtid)
+            picks[indx,1]   = Events[evtid]['location']['OriginTime']
+            picks[indx,2:5] = (np.array(Events[evtid]['location']['Hypocentre'])).astype(str)
+            picks[indx,5:]  = (np.array(Events[evtid]['location']['Hypocentre_std'])).astype(str)
+        except:
+            continue
+    picks_df = pd.DataFrame(picks,
+                            columns=['EventID','DT','X','Y','Z','StdX','StdY','StdZ'])
+    picks_df['X']    = picks_df['X'].astype(float)
+    picks_df['Y']    = picks_df['Y'].astype(float)
+    picks_df['Z']    = picks_df['Z'].astype(float)
+    picks_df['StdX'] = picks_df['StdX'].astype(float)
+    picks_df['StdY'] = picks_df['StdY'].astype(float)
+    picks_df['StdZ'] = picks_df['StdZ'].astype(float)
+    picks_df         = picks_df.dropna(axis=0)
+    picks_df['DT']   = pd.to_datetime(picks_df['DT'])
+    picks_df         = picks_df[['EventID','DT','X','Y','Z','StdX','StdY','StdZ']]
+
+    if type(savefile) == type(None):
+        return picks_df
+    else:
+        picks_df.to_csv(savefile,index=False)
+
+
+
+
+
+
+
 class HypoSVI(torch.nn.Module):
     def __init__(self, EikoNet, Phases=['P','S'], device='cpu'):
         super(HypoSVI, self).__init__()
@@ -866,11 +906,11 @@ class HypoSVI(torch.nn.Module):
             yz.scatter(sta['Z'],sta['Y'],stations_plot[0], marker='<',color=stations_plot[1])
 
 
-        picks_df = self.Events2CSV()
+        picks_df         = self.Events2CSV()
         picks_df['ErrX'] = picks_df['StdX']*num_std
         picks_df['ErrY'] = picks_df['StdY']*num_std
         picks_df['ErrZ'] = picks_df['StdZ']*num_std
-        picks_df = picks_df[np.sum(picks_df[['ErrX','ErrY','ErrZ']],axis=1) <= max_uncertainty].reset_index(drop=True)
+        picks_df         = picks_df[np.sum(picks_df[['ErrX','ErrY','ErrZ']],axis=1) <= max_uncertainty].reset_index(drop=True)
 
         # # Plotting Location info
         # if event_errorbar_marker[0]:
