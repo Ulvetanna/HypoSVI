@@ -26,6 +26,9 @@ import copy
 from string import digits
 from scipy import stats
 import time
+import copy
+from pyproj import Proj
+
 
 # Pytorch Libraires
 import torch
@@ -42,7 +45,6 @@ from torch.cuda.amp import autocast
 from sklearn.cluster import DBSCAN
 # Suppressing the warning 
 pd.options.mode.chained_assignment = None  # default='warn'
-
 
 class RBF(torch.nn.Module):
     ''' 
@@ -133,7 +135,7 @@ def IO_NLLoc2JSON(file,EVT={},startEventID=1000000):
 
 
 class HypoSVI(torch.nn.Module):
-    def __init__(self, EikoNet, Phases=['P','S'], device=torch.device('cpu')):
+    def __init__(self, EikoNet, Phases=['P','S'], device='cpu'):
         super(HypoSVI, self).__init__()
 
         # -- Defining the EikoNet input formats
@@ -142,17 +144,35 @@ class HypoSVI(torch.nn.Module):
         if len(self.eikonet_Phases) != len(self.eikonet_models):
             print('Error - Number of phases not equal to number of EikoNet models')
         
+
+
+
         # Determining if the EikoNets are solved for the same domain
-        xmin_stack = np.vstack([self.eikonet_models[x].VelocityClass.xmin for x in range(len(self.eikonet_models))])
-        xmax_stack = np.vstack([self.eikonet_models[x].VelocityClass.xmax for x in range(len(self.eikonet_models))])
+        xmin_stack = np.vstack([self.eikonet_models[x].Params['VelocityClass'].xmin for x in range(len(self.eikonet_models))])
+        xmax_stack = np.vstack([self.eikonet_models[x].Params['VelocityClass'].xmax for x in range(len(self.eikonet_models))])
         if not (xmin_stack == xmin_stack[0,:]).all() or not (xmax_stack == xmax_stack[0,:]).all():
             print('Error - EikoNet Models not in the same domain\n Min Points = {}\n Max Points = {}'.format(xmin_stack,xmax_stack))
         
-        # Defining the Velocity Class
-        self.VelocityClass = self.eikonet_models[0].VelocityClass
 
+        self.VelocityClass = self.eikonet_models[0].Params['VelocityClass']
+
+
+        # Converting to UTM projection scheme form 
+        self.proj_str = copy.copy(self.eikonet_models[0].Params['VelocityClass'].projection)
+        if type(self.proj_str) != type(None):
+            self.projection = Proj(self.proj_str)
+            self.xmin       = copy.copy(self.VelocityClass.xmin)
+            self.xmax       = copy.copy(self.VelocityClass.xmax)
+            self.xmin[0],self.xmin[1] = self.projection(self.xmin[0],self.xmin[1])
+            self.xmax[0],self.xmax[1] = self.projection(self.xmax[0],self.xmax[1])
+        else:
+            self.projection = None
+            self.xmin       = copy.copy(self.VelocityClass.xmin)
+            self.xmax       = copy.copy(self.VelocityClass.xmax)
+
+        # --------- Initialising Location Information ---------
         # -- Defining the device to run the location procedure on
-        self.device    = device
+        self.device    = torch.device(device)
 
         # -- Defining the parameters required in the earthquake location procedure
         self.location_info = {}
@@ -160,8 +180,8 @@ class HypoSVI(torch.nn.Module):
         self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,2.0] 
         self.location_info['Individual Event Epoch Print Rate']    = None
         self.location_info['Number of Particles']                  = 150 
-        self.location_info['Step Size']                            = 1 #1
-        self.location_info['Save every * events']                  = 1000
+        self.location_info['Step Size']                            = 1
+        self.location_info['Save every * events']                  = 100
         self.location_info['Hypocenter Cluster - Seperation (km)'] = 0.8      
         self.location_info['Hypocenter Cluster - Minimum Samples'] = 5
 
@@ -179,7 +199,7 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['EventPlot']['NonClusterd SVGD']    = [0.5,'k']
         self.plot_info['EventPlot']['Clusterd SVGD']       = [1.2,'g']
         self.plot_info['EventPlot']['Hypocenter Location'] = [15,'k']
-        self.plot_info['EventPlot']['Hypocenter Errorbar'] = [True,'k']
+        self.plot_info['EventPlot']['Hypocenter Errorbar'] = [False,'k']
 
         # Optional Station Plotting
         self.plot_info['EventPlot']['Stations'] = {}
@@ -208,24 +228,15 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']         = [True,0.1,'r',0.8]
         self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]']              = [15,'b',True]
         self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']                      = [0.1,'gray','-',1.0]
-
         
         # ----- Kernel Information ----
         self.K          = RBF()
         self.K.sigma    = 17.5
 
-
-
         # --- Variables that are updated in run-time
         self._σ_T       = None
         self._optimizer = None
         self._orgTime   = None
-
-
-        # --- Depricated
-        #self.location_info['OriginTime Cluster - Seperation (s)']  = 0.3   
-        #self.location_info['OriginTime Cluster - Minimum Samples'] = 3     
-
 
     def locVar(self,T_obs,T_obs_err):
         '''
@@ -262,10 +273,9 @@ class HypoSVI(torch.nn.Module):
         n_particles = X_src.shape[0]
 
         # Forcing points to stay within domain 
-        X_src[:,0] = torch.clamp(X_src[:,0],self.VelocityClass.xmin[0],self.VelocityClass.xmax[0])
-        X_src[:,1] = torch.clamp(X_src[:,1],self.VelocityClass.xmin[1],self.VelocityClass.xmax[1])
-        X_src[:,2] = torch.clamp(X_src[:,2],self.VelocityClass.xmin[2],self.VelocityClass.xmax[2])
-        
+        X_src[:,0] = torch.clamp(X_src[:,0],self.xmin[0],self.xmax[0])
+        X_src[:,1] = torch.clamp(X_src[:,1],self.xmin[1],self.xmax[1])
+        X_src[:,2] = torch.clamp(X_src[:,2],self.xmin[2],self.xmax[2])
 
         # Determining the predicted travel-time for the different phases
         n_obs = 0
@@ -277,7 +287,7 @@ class HypoSVI(torch.nn.Module):
                 pha_T_obs     = t_obs[phase_index].repeat(n_particles, 1)
                 pha_T_obs_err = t_obs_err[phase_index].repeat(n_particles, 1)
                 pha_X_inp     = torch.cat([X_src.repeat_interleave(len(phase_index), dim=0), X_rec[phase_index,:].repeat(n_particles, 1)], dim=1)
-                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp).reshape(n_particles,len(phase_index))
+                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp,projection=False).reshape(n_particles,len(phase_index))
 
                 if cc == 0:
                     n_obs     = len(phase_index)
@@ -306,17 +316,6 @@ class HypoSVI(torch.nn.Module):
         # Setting Misfit to zero to restart
         self._σ_T     = None
 
-        # calculating the time offset
-        # JDS: === Depricated NLLoc Origin Time Method ===
-        # flt_timediff = (abs(T_pred - T_obs).flatten()).detach().cpu().numpy()
-        # clustering   = DBSCAN(eps=self.location_info['OriginTime Cluster - Seperation (s)'], min_samples=self.location_info['OriginTime Cluster - Minimum Samples']).fit(flt_timediff[None,:])
-        # indx         = np.where(clustering.labels_ == np.argmax(np.bincount(clustering.labels_+1))-1)[0]
-        # self.samples_timeDiff           = (T_obs - (T_pred-np.mean(flt_timediff[indx]))).detach().cpu().numpy()
-        # self.originoffset_mean          = np.nanmedian(flt_timediff[indx])
-        # self.originoffset_std           = np.nanstd(flt_timediff[indx])
-        # self.HypocentreSample_timediff  = (self.samples_timeDiff[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:])
-        # self.HypocentreSample_loc       = (X_src[np.argmin(np.sum(abs(self.samples_timeDiff),axis=1)),:]).detach().cpu().numpy()
-
         return phi
 
     def step(self, X_src, X_rec, T_obs, T_obs_err, T_phase):
@@ -337,8 +336,7 @@ class HypoSVI(torch.nn.Module):
             if len(phase_index) != 0:
                 pha_X_inp     = torch.cat([torch.repeat_interleave(Hyp[None,:],len(phase_index),dim=0), X_rec[phase_index,:]], dim=1)
                 pha_T_obs     = Tobs[phase_index]
-                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp)
-
+                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp,projection=False)
                 if cc == 0:
                     T_obs     = pha_T_obs
                     T_pred    = pha_T_pred
@@ -348,8 +346,8 @@ class HypoSVI(torch.nn.Module):
                     T_pred    = torch.cat([T_pred,pha_T_pred])
 
         OT      = np.median((T_pred - Tobs).detach().cpu().numpy())
-        OT_std  = np.nanstd((T_pred - Tobs).detach().cpu().numpy())
         pick_TD = ((T_pred - OT) - T_obs).detach().cpu().numpy()
+        OT_std  = np.nanmean(abs(pick_TD))
 
         return OT,OT_std,pick_TD
 
@@ -363,6 +361,9 @@ class HypoSVI(torch.nn.Module):
             Event_Locations - EventNum, OriginTime, PickErr, X, Y, Z 
 
             Stations -
+
+            # JDS - MAKE CORRECTIONS TO PROJECTION !! 
+
 
         '''
 
@@ -383,7 +384,7 @@ class HypoSVI(torch.nn.Module):
                 Pairs[:,:3] = Tensor(np.array(evtdf[['X','Y','Z']].iloc[indx]))
                 Pairs[:,3:] = Tensor(np.array(picks_phs[['X','Y','Z']]))
                 Pairs       = Pairs.to(self.device)
-                TT_pred     = self.eikonet_models[ind].TravelTimes(Pairs).detach().to('cpu').numpy()
+                TT_pred     = self.eikonet_models[ind].TravelTimes(Pairs,projection=False).detach().to('cpu').numpy()
                 del Pairs
 
                 picks_phs['DT']  = (pd.to_datetime(evtdf['OriginTime'].iloc[indx]) + pd.to_timedelta(TT_pred,unit='S')).strftime('%Y/%m/%dT%H:%M:%S.%f')
@@ -431,13 +432,7 @@ class HypoSVI(torch.nn.Module):
         picks_df['StdZ'] = picks_df['StdZ'].astype(float)
         picks_df = picks_df.dropna(axis=0)
         picks_df['DT'] = pd.to_datetime(picks_df['DT'])
-
-        if projection != None:
-            picks_df['Long'],picks_df['Lat'] = projection(np.array(picks_df['X']),np.array(picks_df['Y']),inverse=True)
-            picks_df = picks_df[['EventID','DT','Long','Lat','X','Y','Z','StdX','StdY','StdZ']]
-        else:
-            picks_df = picks_df[['EventID','DT','X','Y','Z','StdX','StdY','StdZ']]
-
+        picks_df = picks_df[['EventID','DT','X','Y','Z','StdX','StdY','StdZ']]
 
         if type(savefile) == type(None):
             return picks_df
@@ -448,6 +443,8 @@ class HypoSVI(torch.nn.Module):
 
     def LocateEvents(self,EVTS,Stations,output_path,epochs=175,output_plots=False,timer=False):
         self.Events      = EVTS
+
+
 
         print('============================================================================================================')
         print('============================================================================================================')
@@ -490,23 +487,27 @@ class HypoSVI(torch.nn.Module):
             print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
 
             # Adding the station location to the pick files
-            pick_info = pd.merge(Ev['Picks'],Stations[['Network','Station','X','Y','Z']])
+            pick_info   = pd.merge(Ev['Picks'],Stations[['Network','Station','X','Y','Z']])
             Ev['Picks'] = pick_info[['Network','Station','X','Y','Z','PhasePick','DT','PickError']]
 
             # Setting up the random seed locations
             X_src       = torch.zeros((int(self.location_info['Number of Particles']),3))
-            X_src[:,:3] = Tensor(np.random.rand(int(self.location_info['Number of Particles']),3))*(Tensor(self.VelocityClass.xmax)-Tensor(self.VelocityClass.xmin))[None,:] + Tensor(self.VelocityClass.xmin)[None,:]
+            X_src[:,:3] = Tensor(np.random.rand(int(self.location_info['Number of Particles']),3))*(Tensor(self.xmax)-Tensor(self.xmin))[None,:] + Tensor(self.xmin)[None,:]
             X_src       = Variable(X_src).to(self.device)
             self.optim  = torch.optim.Adam([X_src], self.location_info['Step Size'])
             
             # Defining the arrivals times in seconds
             pick_info['Seconds'] = (pick_info['DT'] - np.min(pick_info['DT'])).dt.total_seconds()
 
-            X_rec       = Tensor(np.array(pick_info[['X','Y','Z']])).to(self.device)
+            # Applying projection
+            X_rec       = np.array(pick_info[['X','Y','Z']])
+            if type(self.projection) != type(None):
+                X_rec[:,0],X_rec[:,1] = self.projection(X_rec[:,0],X_rec[:,1])
+
+            X_rec       = Tensor(X_rec).to(self.device)
             T_obs       = Tensor(np.array(pick_info['Seconds'])).to(self.device)
             T_obs_err   = Tensor(np.array(pick_info['PickError'])).to(self.device)
             T_obs_phase = np.array(pick_info['PhasePick'])
-
             X_rec.requires_grad_()
             l = None
             losses = []
@@ -523,8 +524,8 @@ class HypoSVI(torch.nn.Module):
                 self.step(X_src, X_rec, T_obs, T_obs_err, T_obs_phase)
 
             # -- Drop points outside of the domain
-            dmindx = [(X_src[:,2] > self.VelocityClass.xmin[2]) & (X_src[:,2] < self.VelocityClass.xmax[2])]
-            X_src   = X_src[dmindx[0],:]
+            dmindx = [(X_src[:,2] > self.xmin[2]) & (X_src[:,2] < self.xmax[2])]
+            X_src                                     = X_src[dmindx[0],:]
             Ev['location']                            = {}
             Ev['location']['SVGD_points']             = X_src.detach().cpu().numpy().tolist()
             
@@ -533,15 +534,8 @@ class HypoSVI(torch.nn.Module):
                  Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
                  continue
 
-            # # -- Determining the dominant cluster of points and estimating hypocentre 
-            # clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
-            # indx = np.where(clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1))[0]
-            # optHyp              = torch.mean(X_src[indx,:], dim=0)
-            # optHyp_std          = torch.std(X_src[indx,:], dim=0)
-            # Ev['location']['SVGD_points_clusterindx']    = indx.tolist()
-            # Ev['location']['Hypocentre']                 = optHyp.detach().cpu().numpy().tolist()
-            # Ev['location']['Hypocentre_std']             = optHyp_std.detach().cpu().numpy().tolist()
             
+            # -- Determining the hypocentral location
             clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
             indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1)))[0]
             pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
@@ -552,36 +546,40 @@ class HypoSVI(torch.nn.Module):
             Ev['location']['Hypocentre']     = (pts[:,np.argmax(stats.gaussian_kde(pts)(pts))]).tolist()
             Ev['location']['Hypocentre_std'] = np.array([cov[0,0],cov[1,1],cov[2,2]]).tolist()
 
-
-            # JDS: === Depricated NLLoc Origin Time Method ===
-            # Ev['location']['Hypocentre_optimalsample']   = (self.HypocentreSample_loc).tolist()
-            # Ev['location']['OriginTime_std']             = float(self.originoffset_std)
-            # Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(self.originoffset_mean),unit='S'))
-            # Ev['Picks']['TimeDiff']                      = self.HypocentreSample_timediff 
-            # Ev['location']['SVGD_SampleTimeDifferences'] = (self.samples_timeDiff).tolist()
-
-            originOffset,originOffset_std,pick_TD = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
+            # -- Determining the origin time and pick times
+            originOffset,originOffset_std,pick_TD        = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
             Ev['location']['OriginTime_std']             = float(originOffset_std)
             Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(originOffset),unit='S'))
             Ev['Picks']['TimeDiff']                      = pick_TD 
 
-            print('---- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
+
+            # -- Applying the projection from UTM to LatLong
+            if type(self.projection) != type(None):
+                Ev['location']['Hypocentre'] = np.array(Ev['location']['Hypocentre'])
+                Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1] = self.projection(Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],inverse=True)
+                Ev['location']['Hypocentre'] = Ev['location']['Hypocentre'].tolist()
+
+                Ev['location']['SVGD_points'] = np.array(Ev['location']['SVGD_points'])
+                Ev['location']['SVGD_points'][:,0],Ev['location']['SVGD_points'][:,1] = self.projection(Ev['location']['SVGD_points'][:,0],Ev['location']['SVGD_points'][:,1],inverse=True)
+                Ev['location']['SVGD_points'] = Ev['location']['SVGD_points'].tolist()
+
+
+            print('---- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std (km)=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
                                                                                   Ev['location']['Hypocentre_std'][0],Ev['location']['Hypocentre_std'][1],Ev['location']['Hypocentre_std'][2]))
 
             if timer == True:
                 timer_end = time.time()
                 print('Processing took {}s'.format(timer_end-timer_start))
 
-
             # Plotting Event plots
             if output_plots:
                 if timer == True:
                     timer_start = time.time()
                 print('---- Saving Event Plot ----')
-                try:
-                    self.EventPlot(output_path,Ev,EventID=ev)
-                except:
-                    print('----Issue with saving plot !  ----')
+                #try:
+                self.EventPlot(output_path,Ev,EventID=ev)
+                # except:
+                #     print('----Issue with saving plot !  ----')
 
                 if timer == True:
                     timer_end = time.time()
@@ -635,15 +633,29 @@ class HypoSVI(torch.nn.Module):
 
 
         if self.plot_info['EventPlot']['Domain Distance'] != None:
-            xy.set_xlim([optimalloc[0]-self.plot_info['EventPlot']['Domain Distance']/2,optimalloc[0]+self.plot_info['EventPlot']['Domain Distance']/2])
-            xy.set_ylim([optimalloc[1]-self.plot_info['EventPlot']['Domain Distance']/2,optimalloc[1]+self.plot_info['EventPlot']['Domain Distance']/2])
-            xz.set_xlim([optimalloc[0]-self.plot_info['EventPlot']['Domain Distance']/2,optimalloc[0]+self.plot_info['EventPlot']['Domain Distance']/2])
-            xz.set_ylim([optimalloc[2]-self.plot_info['EventPlot']['Domain Distance']/2,optimalloc[2]+self.plot_info['EventPlot']['Domain Distance']/2])
-            yz.set_xlim([optimalloc[2]-self.plot_info['EventPlot']['Domain Distance']/2,optimalloc[2]+self.plot_info['EventPlot']['Domain Distance']/2])
-            yz.set_ylim([optimalloc[1]-self.plot_info['EventPlot']['Domain Distance']/2,optimalloc[1]+self.plot_info['EventPlot']['Domain Distance']/2])
+            if type(self.projection) != type(None):
+                optimalloc_UTM = copy.copy(optimalloc)
+                optimalloc_UTM[0],optimalloc_UTM[1] = self.projection(optimalloc_UTM[0],optimalloc_UTM[1])
+                boundsmin = optimalloc_UTM-self.plot_info['EventPlot']['Domain Distance']/2
+                boundsmax = optimalloc_UTM+self.plot_info['EventPlot']['Domain Distance']/2
+                boundsmin[0],boundsmin[1] = self.projection(boundsmin[0],boundsmin[1],inverse=True)
+                boundsmax[0],boundsmax[1] = self.projection(boundsmax[0],boundsmax[1],inverse=True)
+            else:
+                boundsmin = optimalloc-self.plot_info['EventPlot']['Domain Distance']/2
+                boundsmax = optimalloc+self.plot_info['EventPlot']['Domain Distance']/2
+            xy.set_xlim([boundsmin[0],boundsmax[0]])
+            xy.set_ylim([boundsmin[1],boundsmax[1]])
+            xz.set_xlim([boundsmin[0],boundsmax[0]])
+            xz.set_ylim([boundsmin[2],boundsmax[2]])
+            yz.set_xlim([boundsmin[2],boundsmax[2]])
+            yz.set_ylim([boundsmin[1],boundsmax[1]])
         else:
-            lim_min = self.VelocityClass.xmin
-            lim_max = self.VelocityClass.xmax
+            if type(self.projection) != type(None):
+                lim_min = self.VelocityClass.xmin
+                lim_max = self.VelocityClass.xmax
+            else:
+                lim_min = self.xmin
+                lim_max = self.xmax
             xy.set_xlim([lim_min[0],lim_max[0]])
             xy.set_ylim([lim_min[1],lim_max[1]])
             xz.set_xlim([lim_min[0],lim_max[0]])
@@ -677,7 +689,10 @@ class HypoSVI(torch.nn.Module):
 
         # Defining the Error bar location
         if self.plot_info['EventPlot']['Hypocenter Errorbar'][0]:
-            xy.errorbar(optimalloc[0], optimalloc[1],xerr=optimalloc_std[0], yerr=optimalloc_std[1],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}-stds'.format(self.plot_info['EventPlot']['Errbar std']))
+
+            # JDS - Need to define the plot lines ! Currently Turn off
+
+            xy.errorbar(optimalloc[0],optimalloc[1],xerr=optimalloc_std[0], yerr=optimalloc_std[1],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}-stds'.format(self.plot_info['EventPlot']['Errbar std']))
             xz.errorbar(optimalloc[0],optimalloc[2],xerr=optimalloc_std[0], yerr=optimalloc_std[2],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}stds'.format(self.plot_info['EventPlot']['Errbar std']))
             yz.errorbar(optimalloc[2],optimalloc[1],xerr=optimalloc_std[2], yerr=optimalloc_std[1],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}stds'.format(self.plot_info['EventPlot']['Errbar std']))
 
@@ -688,7 +703,6 @@ class HypoSVI(torch.nn.Module):
             station_markersize  = self.plot_info['EventPlot']['Stations']['Marker Size']
             station_markercolor = self.plot_info['EventPlot']['Stations']['Marker Color']
 
-
             xy.scatter(Stations['X'].iloc[idxsta],
                        Stations['Y'].iloc[idxsta],
                        station_markersize, marker='^',color=station_markercolor,label='Stations')
@@ -696,8 +710,6 @@ class HypoSVI(torch.nn.Module):
             if self.plot_info['EventPlot']['Stations']['Station Names']:
                 for i, txt in enumerate(Stations['Station'].iloc[idxsta]):
                     xy.annotate(txt, (np.array(Stations['X'].iloc[idxsta])[i], np.array(Stations['Y'].iloc[idxsta])[i]))
-
-
 
             xz.scatter(Stations['X'].iloc[idxsta],
                        Stations['Z'].iloc[idxsta],
@@ -709,7 +721,7 @@ class HypoSVI(torch.nn.Module):
 
         # Defining the legend as top lef
         xy.legend(loc='upper left')
-        plt.suptitle(' Earthquake {} +/- {:.2f}s\n Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp Uncertainty +/- [{:.2f},{:.2f},{:.2f}]'.format(OT,OT_std,optimalloc[0],optimalloc[1],optimalloc[2],optimalloc_std[0],optimalloc_std[1],optimalloc_std[2]))                                                                                                 
+        plt.suptitle(' Earthquake {} +/- {:.2f}s\n Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp Uncertainty (km) +/- [{:.2f},{:.2f},{:.2f}]'.format(OT,OT_std,optimalloc[0],optimalloc[1],optimalloc[2],optimalloc_std[0],optimalloc_std[1],optimalloc_std[2]))                                                                                                 
 
         if self.plot_info['EventPlot']['Traces']['Plot Traces']:
             # Determining Event data information
@@ -808,8 +820,13 @@ class HypoSVI(torch.nn.Module):
 
 
         # Defining the limits of the domain
-        lim_min = self.VelocityClass.xmin
-        lim_max = self.VelocityClass.xmax
+
+        if type(self.projection) != type(None):
+            lim_min = self.VelocityClass.xmin
+            lim_max = self.VelocityClass.xmax
+        else:
+            lim_min = self.xmin
+            lim_max = self.xmax
 
         for indx,val in enumerate(user_xmin):
             if val != None:
@@ -855,11 +872,11 @@ class HypoSVI(torch.nn.Module):
         picks_df['ErrZ'] = picks_df['StdZ']*num_std
         picks_df = picks_df[np.sum(picks_df[['ErrX','ErrY','ErrZ']],axis=1) <= max_uncertainty].reset_index(drop=True)
 
-        # Plotting Location info
-        if event_errorbar_marker[0]:
-            xy.errorbar(picks_df['X'],picks_df['Y'],xerr=picks_df['ErrX'],yerr=picks_df['ErrY'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3],label='Catalogue Errorbars')
-            xz.errorbar(picks_df['X'],picks_df['Z'],xerr=picks_df['ErrX'],yerr=picks_df['ErrZ'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3])
-            yz.errorbar(picks_df['Z'],picks_df['Y'],xerr=picks_df['ErrZ'],yerr=picks_df['ErrY'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3])
+        # # Plotting Location info
+        # if event_errorbar_marker[0]:
+        #     xy.errorbar(picks_df['X'],picks_df['Y'],xerr=picks_df['ErrX'],yerr=picks_df['ErrY'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3],label='Catalogue Errorbars')
+        #     xz.errorbar(picks_df['X'],picks_df['Z'],xerr=picks_df['ErrX'],yerr=picks_df['ErrZ'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3])
+        #     yz.errorbar(picks_df['Z'],picks_df['Y'],xerr=picks_df['ErrZ'],yerr=picks_df['ErrY'],fmt='none',linewidth=event_errorbar_marker[1],color=event_errorbar_marker[2],alpha=event_errorbar_marker[3])
 
 
         xy.scatter(picks_df['X'],picks_df['Y'],event_marker[0],event_marker[1],marker=event_marker[2],alpha=event_marker[3],label='Catalogue Locations')
@@ -867,11 +884,11 @@ class HypoSVI(torch.nn.Module):
         yz.scatter(picks_df['Z'],picks_df['Y'],event_marker[0],event_marker[1],marker=event_marker[2],alpha=event_marker[3])
 
 
-        # # Plotting Fault-planes
-        if type(Faults) == str:
-          FAULTS = pd.read_csv(Faults,names=['X','Y'])
-          FAULTS = FAULTS[(FAULTS['X']>=lim_min[0]) & (FAULTS['X']<=lim_max[0]) & (FAULTS['Y']>=lim_min[1]) & (FAULTS['Y']<=lim_max[1])].reset_index(drop=True)
-          xy.scatter(FAULTS['X'],FAULTS['Y'],fault_plane[0],color=fault_plane[1],linestyle=fault_plane[2],alpha=fault_plane[3],label='Mapped Faults')
+        # # # Plotting Fault-planes
+        # if type(Faults) == str:
+        #   FAULTS = pd.read_csv(Faults,names=['X','Y'])
+        #   FAULTS = FAULTS[(FAULTS['X']>=lim_min[0]) & (FAULTS['X']<=lim_max[0]) & (FAULTS['Y']>=lim_min[1]) & (FAULTS['Y']<=lim_max[1])].reset_index(drop=True)
+        #   xy.scatter(FAULTS['X'],FAULTS['Y'],fault_plane[0],color=fault_plane[1],linestyle=fault_plane[2],alpha=fault_plane[3],label='Mapped Faults')
 
         # Plotting legend
         xy.legend(loc='upper left',  markerscale=2, scatterpoints=1, fontsize=10)
