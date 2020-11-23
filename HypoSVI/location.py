@@ -437,7 +437,7 @@ class HypoSVI(torch.nn.Module):
                 del Pairs
 
                 picks_phs['DT']  = TT_pred
-                picks_phs['DT']  = (pd.to_datetime(OT) + pd.to_timedelta(picks_phs['DT'],unit='S')).dt.strftime('%Y/%m/%dT%H:%M:%S.%f')
+                picks_phs['DT']  = (pd.to_datetime(OT ) + pd.to_timedelta(picks_phs['DT'],unit='S')).dt.strftime('%Y/%m/%dT%H:%M:%S.%f')
 
                 picks = picks.append(picks_phs[['Network','Station','PhasePick','DT','PickError']])
 
@@ -720,9 +720,9 @@ class HypoSVI(torch.nn.Module):
 
         # Plotting the kde representation of the scatter data
         if self.plot_info['EventPlot']['Plot kde']:
-            sns.kdeplot(locs[indx_cluster,0],locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1)
-            sns.kdeplot(locs[indx_cluster,0],locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1)
-            sns.kdeplot(locs[indx_cluster,2],locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1)
+            sns.kdeplot(locs[indx_cluster,0],y=locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1)
+            sns.kdeplot(locs[indx_cluster,0],y=locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1)
+            sns.kdeplot(locs[indx_cluster,2],y=locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1)
 
         # Plotting the SVGD samples
         xy.scatter(locs[:,0],locs[:,1],float(self.plot_info['EventPlot']['NonClusterd SVGD'][0]),str(self.plot_info['EventPlot']['NonClusterd SVGD'][1]),label='SVGD Samples')
