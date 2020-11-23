@@ -414,6 +414,8 @@ class HypoSVI(torch.nn.Module):
         for indx in range(len(evtdf)):
             EVT['{}'.format(evtdf['EventNum'].iloc[indx])] = {}
 
+            OT = evtdf['OriginTime'].iloc[indx]
+
             # Defining the picks to append
             picks = pd.DataFrame(columns=['Network','Station','PhasePick','DT','PickError'])
             for ind,phs in enumerate(self.eikonet_Phases):
@@ -434,7 +436,8 @@ class HypoSVI(torch.nn.Module):
                 TT_pred     = self.eikonet_models[ind].TravelTimes(Pairs,projection=False).detach().to('cpu').numpy()
                 del Pairs
 
-                picks_phs['DT']  = TT_pred#(pd.to_datetime(evtdf['OriginTime'].iloc[indx]) + pd.to_timedelta(TT_pred,unit='S')).strftime('%Y/%m/%dT%H:%M:%S.%f')
+                picks_phs['DT']  = TT_pred
+                picks_phs['DT']  = (pd.to_datetime(OT) + pd.to_timedelta(picks_phs['DT'],unit='S')).dt.strftime('%Y/%m/%dT%H:%M:%S.%f')
 
                 picks = picks.append(picks_phs[['Network','Station','PhasePick','DT','PickError']])
 
