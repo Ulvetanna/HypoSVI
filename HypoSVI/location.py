@@ -387,7 +387,7 @@ class HypoSVI(torch.nn.Module):
 
         OT      = np.median((T_pred - Tobs).detach().cpu().numpy())
         pick_TD = ((T_pred - OT) - T_obs).detach().cpu().numpy()
-        OT_std  = np.nanmean(abs(pick_TD))
+        OT_std  = np.nanmedian(abs(pick_TD))
 
         return OT,OT_std,pick_TD
 
@@ -420,9 +420,16 @@ class HypoSVI(torch.nn.Module):
                 picks_phs = Stations[['Network','Station','X','Y','Z']]
                 picks_phs['PhasePick'] = phs
                 picks_phs['PickError'] = evtdf['PickErr'].iloc[indx]
-                Pairs       = torch.zeros((int(len(Stations)),6))
-                Pairs[:,:3] = Tensor(np.array(evtdf[['X','Y','Z']].iloc[indx]))
-                Pairs[:,3:] = Tensor(np.array(picks_phs[['X','Y','Z']]))
+                Pairs       = np.zeros((int(len(Stations)),6))
+                Pairs[:,:3] = np.array(evtdf[['X','Y','Z']].iloc[indx])
+                Pairs[:,3:] = np.array(picks_phs[['X','Y','Z']])
+
+                if type(self.projection) != type(None):
+                    Pairs[:,0],Pairs[:,1] = self.projection(Pairs[:,0],Pairs[:,1])
+                    Pairs[:,3],Pairs[:,4] = self.projection(Pairs[:,3],Pairs[:,4])
+
+                Pairs       = Tensor(Pairs)
+
                 Pairs       = Pairs.to(self.device)
                 TT_pred     = self.eikonet_models[ind].TravelTimes(Pairs,projection=False).detach().to('cpu').numpy()
                 del Pairs
@@ -512,128 +519,130 @@ class HypoSVI(torch.nn.Module):
             if timer == True:
                 timer_start = time.time()
 
+            try:
+                # Determining the event to look at
+                Ev = self.Events[ev]
+                
+                # Formating the pandas datatypes
+                Ev['Picks']['Network']   = Ev['Picks']['Network'].astype(str)
+                Ev['Picks']['Station']   = Ev['Picks']['Station'].astype(str)
+                Ev['Picks']['PhasePick'] = Ev['Picks']['PhasePick'].astype(str)
+                Ev['Picks']['DT']        = pd.to_datetime(Ev['Picks']['DT'])
+                Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)*2
 
-            # Determining the event to look at
-            Ev = self.Events[ev]
-            
-            # Formating the pandas datatypes
-            Ev['Picks']['Network']   = Ev['Picks']['Network'].astype(str)
-            Ev['Picks']['Station']   = Ev['Picks']['Station'].astype(str)
-            Ev['Picks']['PhasePick'] = Ev['Picks']['PhasePick'].astype(str)
-            Ev['Picks']['DT']        = pd.to_datetime(Ev['Picks']['DT'])
-            Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)*2
+                # printing the current event being run
+                print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
 
-            # printing the current event being run
-            print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
+                # Adding the station location to the pick files
+                pick_info   = pd.merge(Ev['Picks'],Stations[['Network','Station','X','Y','Z']])
+                Ev['Picks'] = pick_info[['Network','Station','X','Y','Z','PhasePick','DT','PickError']]
 
-            # Adding the station location to the pick files
-            pick_info   = pd.merge(Ev['Picks'],Stations[['Network','Station','X','Y','Z']])
-            Ev['Picks'] = pick_info[['Network','Station','X','Y','Z','PhasePick','DT','PickError']]
+                # Setting up the random seed locations
+                X_src       = torch.zeros((int(self.location_info['Number of Particles']),3))
+                X_src[:,:3] = Tensor(np.random.rand(int(self.location_info['Number of Particles']),3))*(Tensor(self.xmax)-Tensor(self.xmin))[None,:] + Tensor(self.xmin)[None,:]
+                X_src       = Variable(X_src).to(self.device)
+                self.optim  = torch.optim.Adam([X_src], self.location_info['Step Size'])
+                
+                # Defining the arrivals times in seconds
+                pick_info['Seconds'] = (pick_info['DT'] - np.min(pick_info['DT'])).dt.total_seconds()
 
-            # Setting up the random seed locations
-            X_src       = torch.zeros((int(self.location_info['Number of Particles']),3))
-            X_src[:,:3] = Tensor(np.random.rand(int(self.location_info['Number of Particles']),3))*(Tensor(self.xmax)-Tensor(self.xmin))[None,:] + Tensor(self.xmin)[None,:]
-            X_src       = Variable(X_src).to(self.device)
-            self.optim  = torch.optim.Adam([X_src], self.location_info['Step Size'])
-            
-            # Defining the arrivals times in seconds
-            pick_info['Seconds'] = (pick_info['DT'] - np.min(pick_info['DT'])).dt.total_seconds()
+                # Applying projection
+                X_rec       = np.array(pick_info[['X','Y','Z']])
+                if type(self.projection) != type(None):
+                    X_rec[:,0],X_rec[:,1] = self.projection(X_rec[:,0],X_rec[:,1])
 
-            # Applying projection
-            X_rec       = np.array(pick_info[['X','Y','Z']])
-            if type(self.projection) != type(None):
-                X_rec[:,0],X_rec[:,1] = self.projection(X_rec[:,0],X_rec[:,1])
+                X_rec       = Tensor(X_rec).to(self.device)
+                T_obs       = Tensor(np.array(pick_info['Seconds'])).to(self.device)
+                T_obs_err   = Tensor(np.array(pick_info['PickError'])).to(self.device)
+                T_obs_phase = np.array(pick_info['PhasePick'])
+                X_rec.requires_grad_()
+                l = None
+                losses = []
+                best_l = np.inf
+                #with autocast():
+                for epoch in range(epochs):
+                    self.optim.zero_grad()
 
-            X_rec       = Tensor(X_rec).to(self.device)
-            T_obs       = Tensor(np.array(pick_info['Seconds'])).to(self.device)
-            T_obs_err   = Tensor(np.array(pick_info['PickError'])).to(self.device)
-            T_obs_phase = np.array(pick_info['PhasePick'])
-            X_rec.requires_grad_()
-            l = None
-            losses = []
-            best_l = np.inf
-            #with autocast():
-            for epoch in range(epochs):
-                self.optim.zero_grad()
+                    if self.location_info['Individual Event Epoch Print Rate'] != None:
+                        if epoch % self.location_info['Individual Event Epoch Print Rate'] == 0:
+                            with torch.no_grad():
+                                print("Epoch:", epoch, torch.mean(X_src, dim=0), torch.std(X_src, dim=0))
 
-                if self.location_info['Individual Event Epoch Print Rate'] != None:
-                    if epoch % self.location_info['Individual Event Epoch Print Rate'] == 0:
-                        with torch.no_grad():
-                            print("Epoch:", epoch, torch.mean(X_src, dim=0), torch.std(X_src, dim=0))
+                    self.step(X_src, X_rec, T_obs, T_obs_err, T_obs_phase)
 
-                self.step(X_src, X_rec, T_obs, T_obs_err, T_obs_phase)
+                # -- Drop points outside of the domain
+                dmindx = [(X_src[:,2] > self.xmin[2]) & (X_src[:,2] < self.xmax[2])]
+                X_src                                     = X_src[dmindx[0],:]
+                Ev['location']                            = {}
+                Ev['location']['SVGD_points']             = X_src.detach().cpu().numpy().tolist()
+                
+                if len(Ev['location']['SVGD_points']) == 0:
+                     Ev['location']['Hypocentre']     = (np.ones(3)*np.nan).tolist()
+                     Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
+                     continue
 
-            # -- Drop points outside of the domain
-            dmindx = [(X_src[:,2] > self.xmin[2]) & (X_src[:,2] < self.xmax[2])]
-            X_src                                     = X_src[dmindx[0],:]
-            Ev['location']                            = {}
-            Ev['location']['SVGD_points']             = X_src.detach().cpu().numpy().tolist()
-            
-            if len(Ev['location']['SVGD_points']) == 0:
-                 Ev['location']['Hypocentre']     = (np.ones(3)*np.nan).tolist()
-                 Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
-                 continue
+                
+                # -- Determining the hypocentral location
+                clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
+                indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1)))[0]
+                pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
+                kde     = stats.gaussian_kde(pts)
+                pdf     = kde.pdf(pts)
+                cov     = np.sqrt(abs(kde.covariance))
+                Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
+                Ev['location']['Hypocentre']     = (pts[:,np.argmax(stats.gaussian_kde(pts)(pts))]).tolist()
+                Ev['location']['Hypocentre_std'] = np.array([cov[0,0],cov[1,1],cov[2,2]]).tolist()
 
-            
-            # -- Determining the hypocentral location
-            clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
-            indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1)))[0]
-            pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
-            kde     = stats.gaussian_kde(pts)
-            pdf     = kde.pdf(pts)
-            cov     = np.sqrt(abs(kde.covariance))
-            Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
-            Ev['location']['Hypocentre']     = (pts[:,np.argmax(stats.gaussian_kde(pts)(pts))]).tolist()
-            Ev['location']['Hypocentre_std'] = np.array([cov[0,0],cov[1,1],cov[2,2]]).tolist()
-
-            # -- Determining the origin time and pick times
-            originOffset,originOffset_std,pick_TD        = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
-            Ev['location']['OriginTime_std']             = float(originOffset_std)
-            Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(originOffset),unit='S'))
-            Ev['Picks']['TimeDiff']                      = pick_TD 
-
-
-            # -- Applying the projection from UTM to LatLong
-            if type(self.projection) != type(None):
-                Ev['location']['Hypocentre'] = np.array(Ev['location']['Hypocentre'])
-                Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1] = self.projection(Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],inverse=True)
-                Ev['location']['Hypocentre'] = Ev['location']['Hypocentre'].tolist()
-
-                Ev['location']['SVGD_points'] = np.array(Ev['location']['SVGD_points'])
-                Ev['location']['SVGD_points'][:,0],Ev['location']['SVGD_points'][:,1] = self.projection(Ev['location']['SVGD_points'][:,0],Ev['location']['SVGD_points'][:,1],inverse=True)
-                Ev['location']['SVGD_points'] = Ev['location']['SVGD_points'].tolist()
+                # -- Determining the origin time and pick times
+                originOffset,originOffset_std,pick_TD        = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
+                Ev['location']['OriginTime_std']             = float(originOffset_std)
+                Ev['location']['OriginTime']                 = str(np.min(pick_info['DT']) - pd.Timedelta(float(originOffset),unit='S'))
+                Ev['Picks']['TimeDiff']                      = pick_TD 
 
 
-            print('---- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std (km)=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
-                                                                                  Ev['location']['Hypocentre_std'][0],Ev['location']['Hypocentre_std'][1],Ev['location']['Hypocentre_std'][2]))
+                # -- Applying the projection from UTM to LatLong
+                if type(self.projection) != type(None):
+                    Ev['location']['Hypocentre'] = np.array(Ev['location']['Hypocentre'])
+                    Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1] = self.projection(Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],inverse=True)
+                    Ev['location']['Hypocentre'] = Ev['location']['Hypocentre'].tolist()
 
-            if timer == True:
-                timer_end = time.time()
-                print('Processing took {}s'.format(timer_end-timer_start))
+                    Ev['location']['SVGD_points'] = np.array(Ev['location']['SVGD_points'])
+                    Ev['location']['SVGD_points'][:,0],Ev['location']['SVGD_points'][:,1] = self.projection(Ev['location']['SVGD_points'][:,0],Ev['location']['SVGD_points'][:,1],inverse=True)
+                    Ev['location']['SVGD_points'] = Ev['location']['SVGD_points'].tolist()
 
-            # Plotting Event plots
-            if output_plots:
-                if timer == True:
-                    timer_start = time.time()
-                print('---- Saving Event Plot ----')
-                #try:
-                self.EventPlot(output_path,Ev,EventID=ev)
-                # except:
-                #     print('----Issue with saving plot !  ----')
+
+                print('---- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std (km)=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
+                                                                                      Ev['location']['Hypocentre_std'][0],Ev['location']['Hypocentre_std'][1],Ev['location']['Hypocentre_std'][2]))
 
                 if timer == True:
                     timer_end = time.time()
-                    print('Plotting took {}s'.format(timer_end-timer_start))
+                    print('Processing took {}s'.format(timer_end-timer_start))
 
-            # Saving Catalogue instance
-            if (self.location_info['Save every * events']  != None) and ((c%self.location_info['Save every * events']) == 0):
-                if timer == True:
-                    timer_start = time.time()
-                print('---- Saving Catalogue instance ----')
-                IO_JSON('{}/Catalogue.json'.format(output_path),Events=self.Events,rw_type='w')
-                if timer == True:
-                    timer_end = time.time()
-                    print('Saving took {}s'.format(timer_end-timer_start))
+                # Plotting Event plots
+                if output_plots:
+                    if timer == True:
+                        timer_start = time.time()
+                    print('---- Saving Event Plot ----')
+                    #try:
+                    self.EventPlot(output_path,Ev,EventID=ev)
+                    # except:
+                    #     print('----Issue with saving plot !  ----')
+
+                    if timer == True:
+                        timer_end = time.time()
+                        print('Plotting took {}s'.format(timer_end-timer_start))
+
+                # Saving Catalogue instance
+                if (self.location_info['Save every * events']  != None) and ((c%self.location_info['Save every * events']) == 0):
+                    if timer == True:
+                        timer_start = time.time()
+                    print('---- Saving Catalogue instance ----')
+                    IO_JSON('{}/Catalogue.json'.format(output_path),Events=self.Events,rw_type='w')
+                    if timer == True:
+                        timer_end = time.time()
+                        print('Saving took {}s'.format(timer_end-timer_start))
+            except:
+                print('Event Location failed ! Continuing to next event')
 
 
         # Writing out final catalogue
