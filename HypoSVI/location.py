@@ -434,7 +434,7 @@ class HypoSVI(torch.nn.Module):
                 TT_pred     = self.eikonet_models[ind].TravelTimes(Pairs,projection=False).detach().to('cpu').numpy()
                 del Pairs
 
-                picks_phs['DT']  = (pd.to_datetime(evtdf['OriginTime'].iloc[indx]) + pd.to_timedelta(TT_pred,unit='S')).strftime('%Y/%m/%dT%H:%M:%S.%f')
+                picks_phs['DT']  = TT_pred#(pd.to_datetime(evtdf['OriginTime'].iloc[indx]) + pd.to_timedelta(TT_pred,unit='S')).strftime('%Y/%m/%dT%H:%M:%S.%f')
 
                 picks = picks.append(picks_phs[['Network','Station','PhasePick','DT','PickError']])
 
