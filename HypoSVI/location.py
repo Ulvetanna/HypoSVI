@@ -218,12 +218,12 @@ class HypoSVI(torch.nn.Module):
         self.location_info = {}
         self.location_info['Log-likehood']                         = 'EDT'      
         self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,2.0] 
-        self.location_info['Individual Event Epoch Print Rate']    = None
+        self.location_info['Individual Event Epoch Save and Print Rate'] = [None,False]
         self.location_info['Number of Particles']                  = 150 
         self.location_info['Step Size']                            = 1
         self.location_info['Save every * events']                  = 100
         self.location_info['Hypocenter Cluster - Seperation (km)'] = 0.8      
-        self.location_info['Hypocenter Cluster - Minimum Samples'] = 5
+        self.location_info['Hypocenter Cluster - Minimum Samples'] = 3
 
 
         # --------- Initialising Plotting Information ---------
@@ -271,7 +271,7 @@ class HypoSVI(torch.nn.Module):
         
         # ----- Kernel Information ----
         self.K          = RBF()
-        self.K.sigma    = 17.5
+        self.K.sigma    = 15
 
         # --- Variables that are updated in run-time
         self._σ_T       = None
@@ -519,10 +519,10 @@ class HypoSVI(torch.nn.Module):
 
 
         for c,ev in enumerate(self.Events.keys()):
-            if timer == True:
-                timer_start = time.time()
+            # if timer == True:
+            #     timer_start = time.time()
 
-            try:
+            #try:
                 # Determining the event to look at
                 Ev = self.Events[ev]
                 
@@ -563,15 +563,27 @@ class HypoSVI(torch.nn.Module):
                 losses = []
                 best_l = np.inf
                 #with autocast():
+                cc=0
                 for epoch in range(epochs):
                     self.optim.zero_grad()
-
-                    if self.location_info['Individual Event Epoch Print Rate'] != None:
-                        if epoch % self.location_info['Individual Event Epoch Print Rate'] == 0:
+                    if self.location_info['Individual Event Epoch Save and Print Rate'][0] != None:
+                        if epoch % self.location_info['Individual Event Epoch Save and Print Rate'][0] == 0:
                             with torch.no_grad():
-                                print("Epoch:", epoch, torch.mean(X_src, dim=0), torch.std(X_src, dim=0))
+                                # Print the mean location and std
+                                if self.location_info['Individual Event Epoch Save and Print Rate'][1] == True:
+                                    print("Epoch:", epoch, torch.mean(X_src, dim=0), torch.std(X_src, dim=0))
+
+                                # Save to array the SVGD array
+                                if cc==0:
+                                    PointsSVGD = X_src[...,None]
+                                    cc+=1
+                                else:
+                                    PointsSVGD = torch.cat((PointsSVGD, X_src[...,None]), -1)
+
 
                     self.step(X_src, X_rec, T_obs, T_obs_err, T_obs_phase)
+
+                del cc
 
                 # -- Drop points outside of the domain
                 dmindx = [(X_src[:,2] > self.xmin[2]) & (X_src[:,2] < self.xmax[2])]
@@ -584,7 +596,16 @@ class HypoSVI(torch.nn.Module):
                      Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
                      continue
 
-                
+
+                # -- SVGD Points in Epochs --
+                if self.location_info['Individual Event Epoch Save and Print Rate'][0] != None:
+                    Ev['location']['SVGD_Epochs'] = PointsSVGD.detach().cpu().numpy()
+                    for ii in range(Ev['location']['SVGD_Epochs'].shape[-1]):
+                        if type(self.projection) != type(None):
+                            Ev['location']['SVGD_Epochs'][:,0,ii],Ev['location']['SVGD_Epochs'][:,1,ii] = self.projection(Ev['location']['SVGD_Epochs'][:,0,ii],Ev['location']['SVGD_Epochs'][:,1,ii],inverse=True)
+                    Ev['location']['SVGD_Epochs'] = Ev['location']['SVGD_Epochs'].tolist()
+
+
                 # -- Determining the hypocentral location
                 clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
                 indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1)))[0]
@@ -644,8 +665,8 @@ class HypoSVI(torch.nn.Module):
                     if timer == True:
                         timer_end = time.time()
                         print('Saving took {}s'.format(timer_end-timer_start))
-            except:
-                print('Event Location failed ! Continuing to next event')
+            #except:
+            #    print('Event Location failed ! Continuing to next event')
 
 
         # Writing out final catalogue
@@ -720,9 +741,9 @@ class HypoSVI(torch.nn.Module):
 
         # Plotting the kde representation of the scatter data
         if self.plot_info['EventPlot']['Plot kde']:
-            sns.kdeplot(locs[indx_cluster,0],y=locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1)
-            sns.kdeplot(locs[indx_cluster,0],y=locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1)
-            sns.kdeplot(locs[indx_cluster,2],y=locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1)
+            sns.kdeplot(locs[indx_cluster,0],locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1)
+            sns.kdeplot(locs[indx_cluster,0],locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1)
+            sns.kdeplot(locs[indx_cluster,2],locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1)
 
         # Plotting the SVGD samples
         xy.scatter(locs[:,0],locs[:,1],float(self.plot_info['EventPlot']['NonClusterd SVGD'][0]),str(self.plot_info['EventPlot']['NonClusterd SVGD'][1]),label='SVGD Samples')
