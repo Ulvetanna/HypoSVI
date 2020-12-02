@@ -226,6 +226,7 @@ class HypoSVI(torch.nn.Module):
         self.location_info['Hypocenter Cluster - Minimum Samples'] = 3
 
 
+
         # --------- Initialising Plotting Information ---------
         self.plot_info={}
 
@@ -519,10 +520,9 @@ class HypoSVI(torch.nn.Module):
 
 
         for c,ev in enumerate(self.Events.keys()):
-            # if timer == True:
-            #     timer_start = time.time()
-
-            #try:
+            try:
+                if timer == True:
+                    timer_start = time.time()
                 # Determining the event to look at
                 Ev = self.Events[ev]
                 
@@ -571,7 +571,7 @@ class HypoSVI(torch.nn.Module):
                             with torch.no_grad():
                                 # Print the mean location and std
                                 if self.location_info['Individual Event Epoch Save and Print Rate'][1] == True:
-                                    print("Epoch:", epoch, torch.mean(X_src, dim=0), torch.std(X_src, dim=0))
+                                    print("Epoch - {} ".format(epoch))
 
                                 # Save to array the SVGD array
                                 if cc==0:
@@ -608,10 +608,18 @@ class HypoSVI(torch.nn.Module):
 
                 # -- Determining the hypocentral location
                 clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
-                indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_+1)))-1)))[0]
+                try:
+                    indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_[clustering.labels_ !=-1]+1)))-1)))[0]
+                except:
+                    # No cluster
+                    Ev['location']['Hypocentre']     = (np.ones(3)*np.nan).tolist()
+                    Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
+                    continue
+
+
                 pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
                 kde     = stats.gaussian_kde(pts)
-                pdf     = kde.pdf(pts)
+                pdf     = kde(pts)
                 cov     = np.sqrt(abs(kde.covariance))
                 Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
                 Ev['location']['Hypocentre']     = (pts[:,np.argmax(stats.gaussian_kde(pts)(pts))]).tolist()
@@ -665,8 +673,8 @@ class HypoSVI(torch.nn.Module):
                     if timer == True:
                         timer_end = time.time()
                         print('Saving took {}s'.format(timer_end-timer_start))
-            #except:
-            #    print('Event Location failed ! Continuing to next event')
+            except:
+               print('Event Location failed ! Continuing to next event')
 
 
         # Writing out final catalogue
