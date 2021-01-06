@@ -236,6 +236,7 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['EventPlot']['Errbar std']          = 2.0
         self.plot_info['EventPlot']['Domain Distance']     = 10
         self.plot_info['EventPlot']['Save Type']           = 'png'
+        self.plot_info['EventPlot']['Figure Size Scale']   = 1.0
         self.plot_info['EventPlot']['Plot kde']            = True
         self.plot_info['EventPlot']['NonClusterd SVGD']    = [0.5,'k']
         self.plot_info['EventPlot']['Clusterd SVGD']       = [1.2,'g']
@@ -302,7 +303,10 @@ class HypoSVI(torch.nn.Module):
             σ_T       = ((σ_T[:,pairs[:,0]])**2 + (σ_T[:,pairs[:,1]])**2)
             logL      = torch.exp((-(dT_obs-dT_pred)**2)/(σ_T))*(1/torch.sqrt(σ_T))
             logL      = torch.sum(logL,dim=1)
+            logL      = logL.sum()
 
+        if self.location_info['Log-likehood'] == 'GAU':
+            logL = -torch.sum((((T_obs+1 - T_pred)**2)/(σ_T**2)))
         return logL
     
     def phi(self, X_src, X_rec, t_obs,t_obs_err,t_phase):
@@ -345,8 +349,7 @@ class HypoSVI(torch.nn.Module):
 
         
         self.locVar(T_obs,T_obs_err)
-        log_L     = self.log_L(T_pred,T_obs,self._σ_T)
-        log_prob  = log_L.sum()
+        log_prob   = self.log_L(T_pred,T_obs,self._σ_T)
         score_func = torch.autograd.grad(log_prob, X_src)[0]
 
         # Determining the phi
@@ -520,7 +523,7 @@ class HypoSVI(torch.nn.Module):
 
 
         for c,ev in enumerate(self.Events.keys()):
-            try:
+            # try:
                 if timer == True:
                     timer_start = time.time()
                 # Determining the event to look at
@@ -531,7 +534,7 @@ class HypoSVI(torch.nn.Module):
                 Ev['Picks']['Station']   = Ev['Picks']['Station'].astype(str)
                 Ev['Picks']['PhasePick'] = Ev['Picks']['PhasePick'].astype(str)
                 Ev['Picks']['DT']        = pd.to_datetime(Ev['Picks']['DT'])
-                Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)*2
+                Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)
 
                 # printing the current event being run
                 print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
@@ -673,8 +676,8 @@ class HypoSVI(torch.nn.Module):
                     if timer == True:
                         timer_end = time.time()
                         print('Saving took {}s'.format(timer_end-timer_start))
-            except:
-               print('Event Location failed ! Continuing to next event')
+            # except:
+            #    print('Event Location failed ! Continuing to next event')
 
 
         # Writing out final catalogue
@@ -691,13 +694,13 @@ class HypoSVI(torch.nn.Module):
         Stations       = Event['Picks'][['Station','X','Y','Z']]
 
         if self.plot_info['EventPlot']['Traces']['Plot Traces']==True:
-            fig = plt.figure(figsize=(20, 9))
+            fig = plt.figure(figsize=(20*self.plot_info['EventPlot']['Figure Size Scale'], 9*self.plot_info['EventPlot']['Figure Size Scale']))
             xz  = plt.subplot2grid((3, 5), (2, 0), colspan=2)
             xy  = plt.subplot2grid((3, 5), (0, 0), colspan=2, rowspan=2,sharex=xz)
             yz  = plt.subplot2grid((3, 5), (0, 2), rowspan=2, sharey=xy)
             trc = plt.subplot2grid((3, 5), (0, 3), rowspan=3, colspan=2)
         else:
-            fig = plt.figure(figsize=(9, 9))
+            fig = plt.figure(figsize=(9*self.plot_info['EventPlot']['Figure Size Scale'], 9*self.plot_info['EventPlot']['Figure Size Scale']))
             xz  = plt.subplot2grid((3, 3), (2, 0), colspan=2)
             xy  = plt.subplot2grid((3, 3), (0, 0), colspan=2, rowspan=2,sharex=xz)
             yz  = plt.subplot2grid((3, 3), (0, 2), rowspan=2, sharey=xy) 
