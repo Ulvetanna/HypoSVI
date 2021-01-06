@@ -242,6 +242,7 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['EventPlot']['Clusterd SVGD']       = [1.2,'g']
         self.plot_info['EventPlot']['Hypocenter Location'] = [15,'k']
         self.plot_info['EventPlot']['Hypocenter Errorbar'] = [False,'k']
+        self.plot_info['EventPlot']['Legend']              = True
 
         # Optional Station Plotting
         self.plot_info['EventPlot']['Stations'] = {}
@@ -804,7 +805,8 @@ class HypoSVI(torch.nn.Module):
                        station_markersize,marker='^',color=station_markercolor)
 
         # Defining the legend as top lef
-        xy.legend(loc='upper left')
+        if self.plot_info['EventPlot']['Legend']:
+            xy.legend(loc='upper left')
         plt.suptitle(' Earthquake {} +/- {:.2f}s\n Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp Uncertainty (km) +/- [{:.2f},{:.2f},{:.2f}]'.format(OT,OT_std,optimalloc[0],optimalloc[1],optimalloc[2],optimalloc_std[0],optimalloc_std[1],optimalloc_std[2]))                                                                                                 
 
         if self.plot_info['EventPlot']['Traces']['Plot Traces']:
