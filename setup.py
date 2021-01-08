@@ -15,7 +15,7 @@ SETUP_DIRECTORY = os.path.dirname(os.path.abspath(inspect.getfile(
 LOCAL_PATH = os.path.join(SETUP_DIRECTORY, "setup.py")
 
 NAME    = "HypoSVI"
-VERSION = '0.1.0'
+VERSION = '1.0.0'
 
 INCLUDE_DIRS = numpy.distutils.misc_util.get_numpy_include_dirs()
 

@@ -306,8 +306,6 @@ class HypoSVI(torch.nn.Module):
             logL      = torch.sum(logL,dim=1)
             logL      = logL.sum()
 
-        if self.location_info['Log-likehood'] == 'GAU':
-            logL = -torch.sum((((T_obs+1 - T_pred)**2)/(σ_T**2)))
         return logL
     
     def phi(self, X_src, X_rec, t_obs,t_obs_err,t_phase):
