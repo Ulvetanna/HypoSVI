@@ -1,5 +1,0 @@
-matplotlib
-pandas
-torch
-sklearn
-obspy
