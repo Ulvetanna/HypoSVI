@@ -1,5 +1,5 @@
 
-# HypoSVI: Hypocenter inversion with Stein variational inference andPhysics Informed Neural Networks
+# HypoSVI: Hypocenter inversion with Stein variational inference and Physics Informed Neural Networks
 ---
 
 
