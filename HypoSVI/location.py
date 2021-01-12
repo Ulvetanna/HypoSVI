@@ -536,7 +536,7 @@ class HypoSVI(torch.nn.Module):
                 Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)
 
                 # printing the current event being run
-                print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c,len(self.Events.keys()),len(Ev['Picks'])))
+                print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c+1,len(self.Events.keys()),len(Ev['Picks'])))
 
                 # Adding the station location to the pick files
                 pick_info   = pd.merge(Ev['Picks'],Stations[['Network','Station','X','Y','Z']])
