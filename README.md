@@ -6,10 +6,10 @@
 ***
 ## Introduction
 
-HypoSVI is a software package that allows for earthquake location by levarging the travel-time formulations from a continious deep neural network EikoNet formulation. 
+HypoSVI is a software package that allows for earthquake location by leveraging  the travel-time formulations from a continuous deep neural network EikoNet formulation. 
 
 This approach is outline in greater detail in the publication:
-Smith et al. (2021) - HypoSVI: Hypocenter inversion with Stein variational inference andPhysics Informed Neural Networks - [link to paper](https://arxiv.org/abs/2101.03271)
+Smith et al. (2021) - HypoSVI: Hypocenter inversion with Stein variational inference and Physics Informed Neural Networks - [link to paper](https://arxiv.org/abs/2101.03271)
 
 ## Colab Jupyter Notebook
 We have provided a Colab notebook to allow uses to go through the examples outlined in the paper provided above. The Colab notebook is separated into a series of sections which are all standalone executable scripts, but require the download and build of the software given in the 'Introduction' section of the notebook. As the software develops we will include additional sections.
@@ -18,7 +18,7 @@ Link to the Colab can be found at: [link](https://colab.research.google.com/driv
 
 
 ## Guide to Training and Setup
-This package will be continued to be developed with the inclusion of a stand alone mauals package. This is expected to be added within the next couple of months.
+This package will be continued to be developed with the inclusion of a stand alone manual package. This is expected to be added within the next couple of months.
 
 
 ## Installation
