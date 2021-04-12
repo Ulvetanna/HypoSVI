@@ -222,7 +222,7 @@ class HypoSVI(torch.nn.Module):
         # -- Defining the parameters required in the earthquake location procedure
         self.location_info = {}
         self.location_info['Log-likehood']                         = 'EDT'      
-        self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,2.0] 
+        self.location_info['Tracel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,2.0] 
         self.location_info['Individual Event Epoch Save and Print Rate'] = [None,False]
         self.location_info['Number of Particles']                  = 150 
         self.location_info['Step Size']                            = 1
@@ -260,7 +260,7 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['EventPlot']['Traces']                         = {}
         self.plot_info['EventPlot']['Traces']['Plot Traces']          = False
         self.plot_info['EventPlot']['Traces']['Trace Host']           = None
-        self.plot_info['EventPlot']['Traces']['Trave Host Type']      = 'EQTransformer'
+        self.plot_info['EventPlot']['Traces']['Trace Host Type']      = '/YEAR/JD/*ST*'
         self.plot_info['EventPlot']['Traces']['Channel Types']        = ['EH*','HH*']
         self.plot_info['EventPlot']['Traces']['Filter Freq']          = [2,16]
         self.plot_info['EventPlot']['Traces']['Normalisation Factor'] = 1.0
@@ -292,9 +292,9 @@ class HypoSVI(torch.nn.Module):
             Applying variance from Pick and Distance weighting to each of the observtions
         '''                
         # Intialising a variance of the LOCGAU2 settings
-        self._σ_T  = torch.clamp(T_obs*self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'][0],
-                                       self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'][1],
-                                       self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'][2]).to(self.device)**2
+        self._σ_T  = torch.clamp(T_obs*self.location_info['Tracel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'][0],
+                                       self.location_info['Tracel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'][1],
+                                       self.location_info['Tracel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'][2]).to(self.device)**2
         # Adding the variance of the Station Pick Uncertainties 
         self._σ_T += (T_obs_err**2)
         # Turning back into a std
@@ -328,7 +328,7 @@ class HypoSVI(torch.nn.Module):
         X_src = X_src.detach().requires_grad_(True)
 
 
-        # Determining the predicted travel-time for the different phases
+        # Determining the predicted Tracel-time for the different phases
         n_obs = 0
         cc=0
         
@@ -338,7 +338,7 @@ class HypoSVI(torch.nn.Module):
                 pha_T_obs     = t_obs[phase_index].repeat(n_particles, 1)
                 pha_T_obs_err = t_obs_err[phase_index].repeat(n_particles, 1)
                 pha_X_inp     = torch.cat([X_src.repeat_interleave(len(phase_index), dim=0), X_rec[phase_index,:].repeat(n_particles, 1)], dim=1)
-                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp,projection=False).reshape(n_particles,len(phase_index))
+                pha_T_pred    = self.eikonet_models[ind].TracelTimes(pha_X_inp,projection=False).reshape(n_particles,len(phase_index))
 
                 if cc == 0:
                     n_obs     = len(phase_index)
@@ -375,10 +375,10 @@ class HypoSVI(torch.nn.Module):
 
     def _compute_origin(self,Tobs,t_phase,X_rec,Hyp):
         '''
-            Internal function to compute origin time and predicted travel-times from Obs and Predicted travel-times
+            Internal function to compute origin time and predicted Tracel-times from Obs and Predicted Tracel-times
         '''
 
-        # Determining the predicted travel-time for the different phases
+        # Determining the predicted Tracel-time for the different phases
         n_obs = 0
         cc=0
         for ind,phs in enumerate(self.eikonet_Phases):
@@ -386,7 +386,7 @@ class HypoSVI(torch.nn.Module):
             if len(phase_index) != 0:
                 pha_X_inp     = torch.cat([torch.repeat_interleave(Hyp[None,:],len(phase_index),dim=0), X_rec[phase_index,:]], dim=1)
                 pha_T_obs     = Tobs[phase_index]
-                pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp,projection=False)
+                pha_T_pred    = self.eikonet_models[ind].TracelTimes(pha_X_inp,projection=False)
                 if cc == 0:
                     T_obs     = pha_T_obs
                     T_pred    = pha_T_pred
@@ -403,7 +403,7 @@ class HypoSVI(torch.nn.Module):
 
     def SyntheticCatalogue(self,input_file,Stations,save_file=None):
         '''
-            Determining synthetic travel-times between source and reciever locations, returning a JSON pick file for each event
+            Determining synthetic Tracel-times between source and reciever locations, returning a JSON pick file for each event
 
     
             Event_Locations - EventNum, OriginTime, PickErr, X, Y, Z 
@@ -415,7 +415,7 @@ class HypoSVI(torch.nn.Module):
 
         '''
 
-        # Determining the predicted travel-time to each of the stations to corresponding
+        # Determining the predicted Tracel-time to each of the stations to corresponding
         #source locations. Optional argumenent to return them as json pick
         evtdf  = pd.read_csv(input_file)
         EVT = {}
@@ -441,7 +441,7 @@ class HypoSVI(torch.nn.Module):
                 Pairs       = Tensor(Pairs)
 
                 Pairs       = Pairs.to(self.device)
-                TT_pred     = self.eikonet_models[ind].TravelTimes(Pairs,projection=False).detach().to('cpu').numpy()
+                TT_pred     = self.eikonet_models[ind].TracelTimes(Pairs,projection=False).detach().to('cpu').numpy()
                 del Pairs
 
                 picks_phs['DT']  = TT_pred
@@ -827,13 +827,13 @@ class HypoSVI(torch.nn.Module):
                     net = network[indx]
 
                     # Loading the data of interest
-                    if self.plot_info['EventPlot']['Traces']['Trave Host Type'] == '/YEAR/JD/*ST*':
+                    if self.plot_info['EventPlot']['Traces']['Trace Host Type'] == '/YEAR/JD/*ST*':
                         evt_yr         = str(pd.to_datetime(Event['Picks']['DT'].min()).year)
                         evt_jd         = str(pd.to_datetime(Event['Picks']['DT'].min()).dayofyear).zfill(3)
                         st  = obspy.read('{}/{}/{}/*{}*'.format(Host_path,evt_yr,evt_jd,sta),
                                      starttime=evt_starttime-10,endtime=evt_endtime)
 
-                    if self.plot_info['EventPlot']['Traces']['Trave Host Type'] == 'EQTransformer':
+                    if self.plot_info['EventPlot']['Traces']['Trace Host Type'] == 'EQTransformer':
                         stdate = (pd.to_datetime(Event['Picks']['DT'].min())).strftime('%Y%m%d')
                         endate = (pd.to_datetime(Event['Picks']['DT'].min()) + pd.Timedelta(days=1)).strftime('%Y%m%d')
 
