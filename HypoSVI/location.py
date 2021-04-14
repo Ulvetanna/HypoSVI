@@ -109,9 +109,17 @@ def IO_JSON(file,Events=None,rw_type='r'):
             json.dump(tmpEvents, f)
         del tmpEvents
     elif rw_type == 'a+':
-        with open(file, rw_type) as f:
-            json.dump(tmpEvents, f)
-        del tmpEvents        
+        try:
+            with open(file, 'r+') as f:
+                d = json.load(f)
+                d.update(tmpEvents)
+                f.seek(0)
+        except:
+            d = tmpEvents
+            print('Creating Appending Catalogue - {}'.format(file))      
+        with open(file, 'w') as f:
+            json.dump(d, f)
+        del tmpEvents,d
     elif rw_type =='r':
         return tmpEvents
 
@@ -496,8 +504,14 @@ class HypoSVI(torch.nn.Module):
         else:
             picks_df.to_csv(savefile,index=False)
 
-    def LocateEvents(self,EVTS,Stations,output_path,epochs=175,output_plots=False,timer=False):
+    def LocateEvents(self,EVTS,Stations,output_path,epochs=175,output_plots=False,timer=False,PriorCatalogue=False):
         self.Events      = EVTS
+
+        if PriorCatalogue == False:
+            try:
+                os.system('rm {}/Catalogue.json'.format(output_path))
+            except:
+                print
 
         print('============================================================================================================')
         print('============================================================================================================')
@@ -507,6 +521,11 @@ class HypoSVI(torch.nn.Module):
         print('\n')
         print('      Procssing for {} Events  - Starting DateTime {}'.format(len(EVTS.keys()),time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))))
         print('      Output Folder = {}'.format(output_path))
+        if PriorCatalogue == False:
+            try:
+                os.system('rm {}/Catalogue.json'.format(output_path))
+            except:
+                print('      No Prior Catalogue defined for appending')
         print('\n')
         print('======== Location Settings:')
         print(json.dumps(self.location_info, indent=2, sort_keys=True))
