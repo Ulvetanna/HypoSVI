@@ -19,6 +19,7 @@ import pandas as pd
 from glob import glob
 import pickle
 import math
+from math import *
 import random
 import sys
 import json
@@ -67,8 +68,8 @@ class RBF(torch.nn.Module):
         # Apply the median heuristic (PyTorch does not give true median)
         if self.sigma is None:
             np_dnorm2 = dnorm2.detach().cpu().numpy()
-            h = np.median(np_dnorm2) / (2 * np.log(X.size(0) + 1))
-            sigma = np.sqrt(h).item()
+            h         = np.median(np_dnorm2) / (2 * np.log(X.size(0) + 1))
+            sigma     = np.sqrt(h).item()
 
             if self.print_sigma:
                 print(sigma)
@@ -81,31 +82,49 @@ class RBF(torch.nn.Module):
 
         return K_XY
 
-
 def IO_JSON(file,Events=None,rw_type='r'):
     '''
         Reading/Writing in JSON file into location archieve
     '''
     if rw_type == 'w':
         tmpEvents = copy.deepcopy(Events)
+    elif rw_type == 'a+':
+        tmpEvents = copy.deepcopy(Events)
     elif rw_type == 'r':
         with open(file, 'r') as f:
             tmpEvents = json.load(f)
 
+
     for key in tmpEvents.keys():
         if rw_type=='w':
+            tmpEvents[key]['Picks']       = tmpEvents[key]['Picks'].astype(str).to_dict()
+        elif rw_type=='a+':
             tmpEvents[key]['Picks']       = tmpEvents[key]['Picks'].astype(str).to_dict()
         elif rw_type=='r':
             tmpEvents[key]['Picks']       = pd.DataFrame.from_dict(tmpEvents[key]['Picks'])
         else:
-            print('Please specify either "read" or "write" for handelling the data')
+            print('Please specify either "read (r)", "write (w)" or "append (a)" for handelling the data')
 
     if rw_type == 'w':
         with open(file, rw_type) as f:
             json.dump(tmpEvents, f)
+        del tmpEvents
+    elif rw_type == 'a+':
+        try:
+            with open(file, 'r+') as f:
+                d = json.load(f)
+                d.update(tmpEvents)
+                f.seek(0)
+        except:
+            d = tmpEvents
+            print('Creating Appending Catalogue - {}'.format(file))      
+        with open(file, 'w') as f:
+            json.dump(d, f)
+        del tmpEvents,d
     elif rw_type =='r':
         return tmpEvents
 
+# =========== INPUT/OUTPUT FORMAT =======
 def IO_NLLoc2JSON(file,EVT={},startEventID=1000000):
     # Reading in the lines
     f = open(file, "r")
@@ -133,7 +152,6 @@ def IO_NLLoc2JSON(file,EVT={},startEventID=1000000):
 
     return EVT
 
-
 def IO_JSON2CSV(EVT,savefile=None):
     '''
         Saving Events in CSV format
@@ -148,20 +166,20 @@ def IO_JSON2CSV(EVT,savefile=None):
             picks[indx,0]   = str(evtid)
             picks[indx,1]   = Events[evtid]['location']['OriginTime']
             picks[indx,2:5] = (np.array(Events[evtid]['location']['Hypocentre'])).astype(str)
-            picks[indx,5:]  = (np.array(Events[evtid]['location']['Hypocentre_std'])).astype(str)
+            picks[indx,5:]  = (np.array(Events[evtid]['location']['HypocentreError'])).astype(str)
         except:
             continue
     picks_df = pd.DataFrame(picks,
-                            columns=['EventID','DT','X','Y','Z','StdX','StdY','StdZ'])
+                            columns=['EventID','DT','X','Y','Z','ErrX','ErrY','ErrZ'])
     picks_df['X']    = picks_df['X'].astype(float)
     picks_df['Y']    = picks_df['Y'].astype(float)
     picks_df['Z']    = picks_df['Z'].astype(float)
-    picks_df['StdX'] = picks_df['StdX'].astype(float)
-    picks_df['StdY'] = picks_df['StdY'].astype(float)
-    picks_df['StdZ'] = picks_df['StdZ'].astype(float)
+    picks_df['ErrX'] = picks_df['ErrX'].astype(float)
+    picks_df['ErrY'] = picks_df['ErrY'].astype(float)
+    picks_df['ErrZ'] = picks_df['ErrZ'].astype(float)
     picks_df         = picks_df.dropna(axis=0)
     picks_df['DT']   = pd.to_datetime(picks_df['DT'])
-    picks_df         = picks_df[['EventID','DT','X','Y','Z','StdX','StdY','StdZ']]
+    picks_df         = picks_df[['EventID','DT','X','Y','Z','ErrX','ErrY','ErrZ']]
 
     if type(savefile) == type(None):
         return picks_df
@@ -169,11 +187,7 @@ def IO_JSON2CSV(EVT,savefile=None):
         picks_df.to_csv(savefile,index=False)
 
 
-
-
-
-
-
+# =========== MAIN =======
 class HypoSVI(torch.nn.Module):
     def __init__(self, EikoNet, Phases=['P','S'], device='cpu'):
         super(HypoSVI, self).__init__()
@@ -216,14 +230,17 @@ class HypoSVI(torch.nn.Module):
 
         # -- Defining the parameters required in the earthquake location procedure
         self.location_info = {}
-        self.location_info['Log-likehood']                         = 'EDT'      
+        self.location_info['Log-likehood']                         = 'LAP'      
         self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,2.0] 
         self.location_info['Individual Event Epoch Save and Print Rate'] = [None,False]
         self.location_info['Number of Particles']                  = 150 
         self.location_info['Step Size']                            = 1
         self.location_info['Save every * events']                  = 100
-        self.location_info['Hypocenter Cluster - Seperation (km)'] = 0.8      
-        self.location_info['Hypocenter Cluster - Minimum Samples'] = 3
+        self.location_info['Location Uncertainty Percentile (%)']  = 99.5
+
+        # Depricated values
+        self.location_info['Hypocenter Cluster - Seperation (km)'] = None     
+        self.location_info['Hypocenter Cluster - Minimum Samples'] = None
 
 
 
@@ -233,15 +250,14 @@ class HypoSVI(torch.nn.Module):
         # - Event Plot parameters
         # Location plotting
         self.plot_info['EventPlot']  = {}
-        self.plot_info['EventPlot']['Errbar std']          = 2.0
-        self.plot_info['EventPlot']['Domain Distance']     = 10
+        self.plot_info['EventPlot']['Domain Distance']     = None#10
         self.plot_info['EventPlot']['Save Type']           = 'png'
         self.plot_info['EventPlot']['Figure Size Scale']   = 1.0
         self.plot_info['EventPlot']['Plot kde']            = True
         self.plot_info['EventPlot']['NonClusterd SVGD']    = [0.5,'k']
         self.plot_info['EventPlot']['Clusterd SVGD']       = [1.2,'g']
         self.plot_info['EventPlot']['Hypocenter Location'] = [15,'k']
-        self.plot_info['EventPlot']['Hypocenter Errorbar'] = [False,'k']
+        self.plot_info['EventPlot']['Hypocenter Errorbar'] = [True,'k']
         self.plot_info['EventPlot']['Legend']              = True
 
         # Optional Station Plotting
@@ -255,6 +271,7 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['EventPlot']['Traces']                         = {}
         self.plot_info['EventPlot']['Traces']['Plot Traces']          = False
         self.plot_info['EventPlot']['Traces']['Trace Host']           = None
+        self.plot_info['EventPlot']['Traces']['Trace Host Type']      = '/YEAR/JD/*ST*'
         self.plot_info['EventPlot']['Traces']['Channel Types']        = ['EH*','HH*']
         self.plot_info['EventPlot']['Traces']['Filter Freq']          = [2,16]
         self.plot_info['EventPlot']['Traces']['Normalisation Factor'] = 1.0
@@ -266,15 +283,15 @@ class HypoSVI(torch.nn.Module):
         self.plot_info['CataloguePlot'] = {}
         self.plot_info['CataloguePlot']['Minimum Phase Picks']                                           = 12
         self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']                             = 15
-        self.plot_info['CataloguePlot']['Num Std to define errorbar']                                    = 2
         self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']                     = [0.1,'r','*',0.8]
         self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']         = [True,0.1,'r',0.8]
         self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]']              = [15,'b',True]
         self.plot_info['CataloguePlot']['Fault Planes - [Size,Color,Marker,Alpha]']                      = [0.1,'gray','-',1.0]
         
         # ----- Kernel Information ----
-        self.K          = RBF()
-        self.K.sigma    = 15
+        self.K             = RBF()
+        self.K.sigma       = 1.5
+        self.K.print_sigma = False
 
         # --- Variables that are updated in run-time
         self._σ_T       = None
@@ -306,13 +323,23 @@ class HypoSVI(torch.nn.Module):
             logL      = torch.sum(logL,dim=1)
             logL      = logL.sum()
 
+        if self.location_info['Log-likehood'] == 'LAP':
+            from itertools import combinations
+            pairs     = combinations(np.arange(T_obs.shape[1]), 2)
+            pairs     = np.array(list(pairs))
+            dT_obs    = T_obs[:,pairs[:,0]] - T_obs[:,pairs[:,1]]
+            dT_pred   = T_pred[:,pairs[:,0]] - T_pred[:,pairs[:,1]]
+            σ_T       = torch.sqrt((σ_T[:,pairs[:,0]])**2 + (σ_T[:,pairs[:,1]])**2)
+            logL      = (-(sqrt(2.)*abs(dT_obs-dT_pred))/σ_T ) + torch.log(1/(sqrt(2.)*σ_T))
+            logL      = torch.sum(logL,dim=1)
+            logL      = logL.sum()
+
+
+
+
         return logL
     
     def phi(self, X_src, X_rec, t_obs,t_obs_err,t_phase):
-
-        # Setting up the gradient requirements
-        X_src = X_src.detach().requires_grad_(True)
-
         # Preparing EikoNet input
         n_particles = X_src.shape[0]
 
@@ -321,7 +348,10 @@ class HypoSVI(torch.nn.Module):
         X_src[:,1] = torch.clamp(X_src[:,1],self.xmin[1],self.xmax[1])
         X_src[:,2] = torch.clamp(X_src[:,2],self.xmin[2],self.xmax[2])
 
-        # Determining the predicted travel-time for the different phases
+        # Setting up the gradient requirements
+        X_src = X_src.detach().requires_grad_(True)
+
+        # Determining the predicted Travel-time for the different phases
         n_obs = 0
         cc=0
         
@@ -368,10 +398,10 @@ class HypoSVI(torch.nn.Module):
 
     def _compute_origin(self,Tobs,t_phase,X_rec,Hyp):
         '''
-            Internal function to compute origin time and predicted travel-times from Obs and Predicted travel-times
+            Internal function to compute origin time and predicted Travel-times from Obs and Predicted Travel-times
         '''
 
-        # Determining the predicted travel-time for the different phases
+        # Determining the predicted Travel-time for the different phases
         n_obs = 0
         cc=0
         for ind,phs in enumerate(self.eikonet_Phases):
@@ -379,7 +409,16 @@ class HypoSVI(torch.nn.Module):
             if len(phase_index) != 0:
                 pha_X_inp     = torch.cat([torch.repeat_interleave(Hyp[None,:],len(phase_index),dim=0), X_rec[phase_index,:]], dim=1)
                 pha_T_obs     = Tobs[phase_index]
+
+                #pha_X_inp.requires_grad_()
                 pha_T_pred    = self.eikonet_models[ind].TravelTimes(pha_X_inp,projection=False)
+                
+                # # -- Determinig take-off angles -- 
+                # dpha_T_pred   = torch.autograd.grad(outputs=pha_T_pred,inputs=pha_X_inp)[0]
+                # dst  = torch.sum(dpha_T_pred[:,:3]**2,dim=1)
+                # plng = torch.arcsin(-dpha_T_pred[:,2]/dst)
+                # azi  = torch.rad2deg(torch.arctan(pha_T_pred[:,0]/dpha_T_pred[:,1]))
+
                 if cc == 0:
                     T_obs     = pha_T_obs
                     T_pred    = pha_T_pred
@@ -394,11 +433,9 @@ class HypoSVI(torch.nn.Module):
 
         return OT,OT_std,pick_TD
 
-
-
     def SyntheticCatalogue(self,input_file,Stations,save_file=None):
         '''
-            Determining synthetic travel-times between source and reciever locations, returning a JSON pick file for each event
+            Determining synthetic Travel-times between source and reciever locations, returning a JSON pick file for each event
 
     
             Event_Locations - EventNum, OriginTime, PickErr, X, Y, Z 
@@ -410,7 +447,7 @@ class HypoSVI(torch.nn.Module):
 
         '''
 
-        # Determining the predicted travel-time to each of the stations to corresponding
+        # Determining the predicted Travel-time to each of the stations to corresponding
         #source locations. Optional argumenent to return them as json pick
         evtdf  = pd.read_csv(input_file)
         EVT = {}
@@ -454,7 +491,6 @@ class HypoSVI(torch.nn.Module):
 
         return EVT
 
-
     def Events2CSV(self,EVT=None,savefile=None,projection=None):
         '''
             Saving Events in CSV format
@@ -472,32 +508,34 @@ class HypoSVI(torch.nn.Module):
                 picks[indx,0]   = str(evtid)
                 picks[indx,1]   = self.Events[evtid]['location']['OriginTime']
                 picks[indx,2:5] = (np.array(self.Events[evtid]['location']['Hypocentre'])).astype(str)
-                picks[indx,5:]  = (np.array(self.Events[evtid]['location']['Hypocentre_std'])).astype(str)
+                picks[indx,5:]  = (np.array(self.Events[evtid]['location']['HypocentreError'])).astype(str)
             except:
                 continue
         picks_df = pd.DataFrame(picks,
-                                columns=['EventID','DT','X','Y','Z','StdX','StdY','StdZ'])
+                                columns=['EventID','DT','X','Y','Z','ErrX','ErrY','ErrZ'])
         picks_df['X'] = picks_df['X'].astype(float)
         picks_df['Y'] = picks_df['Y'].astype(float)
         picks_df['Z']    = picks_df['Z'].astype(float)
-        picks_df['StdX'] = picks_df['StdX'].astype(float)
-        picks_df['StdY'] = picks_df['StdY'].astype(float)
-        picks_df['StdZ'] = picks_df['StdZ'].astype(float)
+        picks_df['ErrX'] = picks_df['ErrX'].astype(float)
+        picks_df['ErrY'] = picks_df['ErrY'].astype(float)
+        picks_df['ErrZ'] = picks_df['ErrZ'].astype(float)
         picks_df = picks_df.dropna(axis=0)
         picks_df['DT'] = pd.to_datetime(picks_df['DT'])
-        picks_df = picks_df[['EventID','DT','X','Y','Z','StdX','StdY','StdZ']]
+        picks_df = picks_df[['EventID','DT','X','Y','Z','ErrX','ErrY','ErrZ']]
 
         if type(savefile) == type(None):
             return picks_df
         else:
             picks_df.to_csv(savefile,index=False)
 
-
-
-    def LocateEvents(self,EVTS,Stations,output_path,epochs=175,output_plots=False,timer=False):
+    def LocateEvents(self,EVTS,Stations,output_path,epochs=175,output_plots=False,timer=False,PriorCatalogue=False):
         self.Events      = EVTS
 
-
+        if PriorCatalogue == False:
+            try:
+                os.system('rm {}/Catalogue.json'.format(output_path))
+            except:
+                print
 
         print('============================================================================================================')
         print('============================================================================================================')
@@ -507,6 +545,11 @@ class HypoSVI(torch.nn.Module):
         print('\n')
         print('      Procssing for {} Events  - Starting DateTime {}'.format(len(EVTS.keys()),time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))))
         print('      Output Folder = {}'.format(output_path))
+        if PriorCatalogue == False:
+            try:
+                os.system('rm {}/Catalogue.json'.format(output_path))
+            except:
+                print('      No Prior Catalogue defined for appending')
         print('\n')
         print('======== Location Settings:')
         print(json.dumps(self.location_info, indent=2, sort_keys=True))
@@ -520,12 +563,13 @@ class HypoSVI(torch.nn.Module):
         print('============================================================================================================')
         print('============================================================================================================')
 
-
+        evtid = []
         for c,ev in enumerate(self.Events.keys()):
             # try:
                 if timer == True:
                     timer_start = time.time()
                 # Determining the event to look at
+                evtid.append(ev)
                 Ev = self.Events[ev]
                 
                 # Formating the pandas datatypes
@@ -534,6 +578,11 @@ class HypoSVI(torch.nn.Module):
                 Ev['Picks']['PhasePick'] = Ev['Picks']['PhasePick'].astype(str)
                 Ev['Picks']['DT']        = pd.to_datetime(Ev['Picks']['DT'])
                 Ev['Picks']['PickError'] = Ev['Picks']['PickError'].astype(float)
+                Ev['Picks']              = Ev['Picks'][Ev['Picks']['PhasePick'].isin(self.eikonet_Phases)].reset_index(drop=True)
+
+                if len(Ev['Picks']) == 0:
+                    print('Now phase picks for the desired phases ! Event cannot be located')
+                    continue
 
                 # printing the current event being run
                 print('================= Processing Event:{} - Event {} of {} - Number of observtions={} =============='.format(ev,c+1,len(self.Events.keys()),len(Ev['Picks'])))
@@ -566,24 +615,24 @@ class HypoSVI(torch.nn.Module):
                 best_l = np.inf
                 #with autocast():
                 cc=0
-                for epoch in range(epochs):
-                    self.optim.zero_grad()
-                    if self.location_info['Individual Event Epoch Save and Print Rate'][0] != None:
+
+                if self.location_info['Individual Event Epoch Save and Print Rate'][0] != None:
+                    for epoch in range(epochs):
+                        self.optim.zero_grad()
                         if epoch % self.location_info['Individual Event Epoch Save and Print Rate'][0] == 0:
                             with torch.no_grad():
-                                # Print the mean location and std
                                 if self.location_info['Individual Event Epoch Save and Print Rate'][1] == True:
                                     print("Epoch - {} ".format(epoch))
-
-                                # Save to array the SVGD array
                                 if cc==0:
                                     PointsSVGD = X_src[...,None]
                                     cc+=1
                                 else:
                                     PointsSVGD = torch.cat((PointsSVGD, X_src[...,None]), -1)
-
-
-                    self.step(X_src, X_rec, T_obs, T_obs_err, T_obs_phase)
+                        self.step(X_src, X_rec, T_obs, T_obs_err, T_obs_phase)
+                else:
+                    for epoch in range(epochs):
+                        self.optim.zero_grad()
+                        self.step(X_src, X_rec, T_obs, T_obs_err, T_obs_phase)
 
                 del cc
 
@@ -595,9 +644,9 @@ class HypoSVI(torch.nn.Module):
                 
                 if len(Ev['location']['SVGD_points']) == 0:
                      Ev['location']['Hypocentre']     = (np.ones(3)*np.nan).tolist()
-                     Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
+                     Ev['location']['HypocentreError'] = (np.ones(3)*np.nan).tolist()
+                     print('Earthquake particle locations failed to converge - all particles outside the volume of interest')
                      continue
-
 
                 # -- SVGD Points in Epochs --
                 if self.location_info['Individual Event Epoch Save and Print Rate'][0] != None:
@@ -608,24 +657,45 @@ class HypoSVI(torch.nn.Module):
                     Ev['location']['SVGD_Epochs'] = Ev['location']['SVGD_Epochs'].tolist()
 
 
-                # -- Determining the hypocentral location
-                clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
-                try:
-                    indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_[clustering.labels_ !=-1]+1)))-1)))[0]
-                except:
-                    # No cluster
-                    Ev['location']['Hypocentre']     = (np.ones(3)*np.nan).tolist()
-                    Ev['location']['Hypocentre_std'] = (np.ones(3)*np.nan).tolist()
-                    continue
+                # === DEPRICATED CLUSTERING TECHNIQUE ===
+                if (type(self.location_info['Hypocenter Cluster - Seperation (km)']) != type(None)) and (type(self.location_info['Hypocenter Cluster - Minimum Samples']) != type(None)):
+                    clustering = DBSCAN(eps=self.location_info['Hypocenter Cluster - Seperation (km)'], min_samples=self.location_info['Hypocenter Cluster - Minimum Samples']).fit(X_src.detach().cpu())
+                    try:
+                        indx    = np.where((clustering.labels_ == (np.argmax(np.bincount(np.array(clustering.labels_[clustering.labels_ !=-1]+1)))-1)))[0]
+                        print('Events Clustered - Cluster Size ={}'.format(len(indx)))
+                    except:
+                        indx    = np.arange(X_src.shape[0])
+                        print('Warning - No particles clustering, making all particles a single cluster')
+                else:
+                    indx    = np.arange(X_src.shape[0])
 
 
                 pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
-                kde     = stats.gaussian_kde(pts)
-                pdf     = kde(pts)
-                cov     = np.sqrt(abs(kde.covariance))
+                try:
+                    # kde     = stats.gaussian_kde(pts,bw_method='silverman')
+                    # pdf     = kde(pts)
+                    # cov     = np.sqrt(abs(np.cov(pts)))
+                    # hyp     = pts[:,np.argmax(pdf)]
+
+
+                    import matplotlib.pyplot as plt
+                    from scipy import stats
+                    from sklearn.covariance import MinCovDet
+                    robust_cov       = MinCovDet().fit(np.transpose(pts))
+                    std  = np.sqrt(np.diag(abs(robust_cov.covariance_)))
+                    hyp  = robust_cov.location_
+                    err  = stats.norm.ppf(self.location_info['Location Uncertainty Percentile (%)']/100)*std
+
+                except:
+                    print('Earthquake particle locations failed to converge - kernel density failure')
+                    continue
+
+
+
+                #cov = np.sqrt(abs(np.cov(pts)))
                 Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
-                Ev['location']['Hypocentre']     = (pts[:,np.argmax(stats.gaussian_kde(pts)(pts))]).tolist()
-                Ev['location']['Hypocentre_std'] = np.array([cov[0,0],cov[1,1],cov[2,2]]).tolist()
+                Ev['location']['Hypocentre']               = (hyp).tolist()
+                Ev['location']['HypocentreError']          = np.array([err[0],err[1],err[2]]).tolist()
 
                 # -- Determining the origin time and pick times
                 originOffset,originOffset_std,pick_TD        = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
@@ -645,8 +715,8 @@ class HypoSVI(torch.nn.Module):
                     Ev['location']['SVGD_points'] = Ev['location']['SVGD_points'].tolist()
 
 
-                print('---- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp/Std (km)=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
-                                                                                      Ev['location']['Hypocentre_std'][0],Ev['location']['Hypocentre_std'][1],Ev['location']['Hypocentre_std'][2]))
+                print('---- OT= {} +/- {}s - Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp Uncertainty (+/- km)=[{:.2f},{:.2f},{:.2f}]'.format(Ev['location']['OriginTime'],Ev['location']['OriginTime_std'],Ev['location']['Hypocentre'][0],Ev['location']['Hypocentre'][1],Ev['location']['Hypocentre'][2],
+                                                                                      Ev['location']['HypocentreError'][0],Ev['location']['HypocentreError'][1],Ev['location']['HypocentreError'][2]))
 
                 if timer == True:
                     timer_end = time.time()
@@ -671,7 +741,8 @@ class HypoSVI(torch.nn.Module):
                     if timer == True:
                         timer_start = time.time()
                     print('---- Saving Catalogue instance ----')
-                    IO_JSON('{}/Catalogue.json'.format(output_path),Events=self.Events,rw_type='w')
+                    IO_JSON('{}/Catalogue.json'.format(output_path),Events={ev:self.Events[ev] for ev in evtid},rw_type='a+')
+                    {ev:'Located & Saved' for ev in evtid} #Freeing up memory
                     if timer == True:
                         timer_end = time.time()
                         print('Saving took {}s'.format(timer_end-timer_start))
@@ -680,7 +751,8 @@ class HypoSVI(torch.nn.Module):
 
 
         # Writing out final catalogue
-        IO_JSON('{}/Catalogue.json'.format(output_path),Events=self.Events,rw_type='w')
+        IO_JSON('{}/Catalogue.json'.format(output_path),Events={ev:self.Events[ev] for ev in evtid},rw_type='a+')
+        {ev:'Located & Saved' for ev in evtid}
 
     def EventPlot(self,PATH,Event,EventID=None):
         plt.close('all')
@@ -688,7 +760,7 @@ class HypoSVI(torch.nn.Module):
         OT_std         = Event['location']['OriginTime_std']
         locs           = np.array(Event['location']['SVGD_points'])
         optimalloc     = np.array(Event['location']['Hypocentre'])
-        optimalloc_std = np.array(Event['location']['Hypocentre_std'])*self.plot_info['EventPlot']['Errbar std']
+        optimalloc_Err = np.array(Event['location']['HypocentreError'])
         indx_cluster   = np.array(Event['location']['SVGD_points_clusterindx'])
         Stations       = Event['Picks'][['Station','X','Y','Z']]
 
@@ -751,9 +823,9 @@ class HypoSVI(torch.nn.Module):
 
         # Plotting the kde representation of the scatter data
         if self.plot_info['EventPlot']['Plot kde']:
-            sns.kdeplot(locs[indx_cluster,0],locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1)
-            sns.kdeplot(locs[indx_cluster,0],locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1)
-            sns.kdeplot(locs[indx_cluster,2],locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1)
+            sns.kdeplot(x=locs[indx_cluster,0],y=locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1,gridsize=500,bw_method=0.25)
+            sns.kdeplot(x=locs[indx_cluster,0],y=locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1,gridsize=500,bw_method=0.25)
+            sns.kdeplot(x=locs[indx_cluster,2],y=locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1,gridsize=500,bw_method=0.25)
 
         # Plotting the SVGD samples
         xy.scatter(locs[:,0],locs[:,1],float(self.plot_info['EventPlot']['NonClusterd SVGD'][0]),str(self.plot_info['EventPlot']['NonClusterd SVGD'][1]),label='SVGD Samples')
@@ -773,11 +845,10 @@ class HypoSVI(torch.nn.Module):
         # Defining the Error bar location
         if self.plot_info['EventPlot']['Hypocenter Errorbar'][0]:
 
-            # JDS - Need to define the plot lines ! Currently Turn off
-
-            xy.errorbar(optimalloc[0],optimalloc[1],xerr=optimalloc_std[0], yerr=optimalloc_std[1],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}-stds'.format(self.plot_info['EventPlot']['Errbar std']))
-            xz.errorbar(optimalloc[0],optimalloc[2],xerr=optimalloc_std[0], yerr=optimalloc_std[2],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}stds'.format(self.plot_info['EventPlot']['Errbar std']))
-            yz.errorbar(optimalloc[2],optimalloc[1],xerr=optimalloc_std[2], yerr=optimalloc_std[1],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}stds'.format(self.plot_info['EventPlot']['Errbar std']))
+            # JDS - Currently these are rough errorbars, need to improve
+            xy.errorbar(optimalloc[0],optimalloc[1],xerr=optimalloc_Err[0]/111, yerr=optimalloc_Err[1]/111,color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}% Confidence'.format(self.location_info['Location Uncertainty Percentile (%)']))
+            xz.errorbar(optimalloc[0],optimalloc[2],xerr=optimalloc_Err[0]/111, yerr=optimalloc_Err[2],color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}% Confidence'.format(self.location_info['Location Uncertainty Percentile (%)']))
+            yz.errorbar(optimalloc[2],optimalloc[1],xerr=optimalloc_Err[2], yerr=optimalloc_Err[1]/111,color=self.plot_info['EventPlot']['Hypocenter Errorbar'][1],label='Hyp {}% Confidence'.format(self.location_info['Location Uncertainty Percentile (%)']))
 
 
         # Optional Station Location used in inversion
@@ -805,12 +876,9 @@ class HypoSVI(torch.nn.Module):
         # Defining the legend as top lef
         if self.plot_info['EventPlot']['Legend']:
             xy.legend(loc='upper left')
-        plt.suptitle(' Earthquake {} +/- {:.2f}s\n Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp Uncertainty (km) +/- [{:.2f},{:.2f},{:.2f}]'.format(OT,OT_std,optimalloc[0],optimalloc[1],optimalloc[2],optimalloc_std[0],optimalloc_std[1],optimalloc_std[2]))                                                                                                 
+        plt.suptitle(' Earthquake {} +/- {:.2f}s\n Hyp=[{:.2f},{:.2f},{:.2f}] - Hyp Uncertainty (km) +/- [{:.2f},{:.2f},{:.2f}]'.format(OT,OT_std,optimalloc[0],optimalloc[1],optimalloc[2],optimalloc_Err[0],optimalloc_Err[1],optimalloc_Err[2]))                                                                                                 
 
         if self.plot_info['EventPlot']['Traces']['Plot Traces']:
-            # Determining Event data information
-            evt_yr         = str(pd.to_datetime(Event['Picks']['DT'].min()).year)
-            evt_jd         = str(pd.to_datetime(Event['Picks']['DT'].min()).dayofyear).zfill(3)
             evt_starttime  = UTCDateTime(OT) + self.plot_info['EventPlot']['Traces']['Time Bounds'][0]
             evt_endtime    = UTCDateTime(Event['Picks']['DT'].max()) + self.plot_info['EventPlot']['Traces']['Time Bounds'][1]
             nf             = self.plot_info['EventPlot']['Traces']['Normalisation Factor']
@@ -827,8 +895,18 @@ class HypoSVI(torch.nn.Module):
                     net = network[indx]
 
                     # Loading the data of interest
-                    st  = obspy.read('{}/{}/{}/*{}*'.format(Host_path,evt_yr,evt_jd,sta),
-                                 starttime=evt_starttime-10,endtime=evt_endtime)
+                    if self.plot_info['EventPlot']['Traces']['Trace Host Type'] == '/YEAR/JD/*ST*':
+                        evt_yr         = str(pd.to_datetime(Event['Picks']['DT'].min()).year)
+                        evt_jd         = str(pd.to_datetime(Event['Picks']['DT'].min()).dayofyear).zfill(3)
+                        st  = obspy.read('{}/{}/{}/*{}*'.format(Host_path,evt_yr,evt_jd,sta),
+                                     starttime=evt_starttime-10,endtime=evt_endtime)
+
+                    if self.plot_info['EventPlot']['Traces']['Trace Host Type'] == 'EQTransformer':
+                        stdate = (pd.to_datetime(Event['Picks']['DT'].min())).strftime('%Y%m%d')
+                        endate = (pd.to_datetime(Event['Picks']['DT'].min()) + pd.Timedelta(days=1)).strftime('%Y%m%d')
+
+                        st  = obspy.read('{}/{}/{}.{}*__{}T*__{}T*.mseed'.format(Host_path,sta,net,sta,stdate,endate), starttime=evt_starttime-10,endtime=evt_endtime)
+
 
                     # Selecting only the user specified channels
                     for ch in self.plot_info['EventPlot']['Traces']['Channel Types']:
@@ -839,7 +917,7 @@ class HypoSVI(torch.nn.Module):
             # Plotting the Trace data
             yloc = np.arange(len(stations)) + 1
             for indx,staName in enumerate(stations):
-                try:
+                # try:
                     net = network[indx]
                     # Plotting the Station traces
                     stm = ST.select(station=staName)
@@ -867,19 +945,19 @@ class HypoSVI(torch.nn.Module):
                         if stadf.iloc[indxrw]['PhasePick'] == 'S':
                             trc.plot([pick_time,pick_time],[yloc[indx]-0.6*nf,yloc[indx]+0.6*nf],linestyle='-',color='b',linewidth=pick_linewidth)
                             trc.plot([synpick_time,synpick_time],[yloc[indx]-0.6*nf,yloc[indx]+0.6*nf],linestyle='--',color='b',linewidth=pick_linewidth)
-                except:
-                    continue
+                # except:
+                #     continue
 
             trc.yaxis.tick_right()
             trc.yaxis.set_label_position("right")
-            trc.set_xlim([0,evt_endtime - evt_starttime])
+            #trc.set_xlim([0,evt_endtime - evt_starttime])
             trc.set_ylim([0,len(stations)+1])
             trc.set_yticks(np.arange(1,len(stations)+1))
             trc.set_yticklabels(stations)
             trc.set_xlabel('Seconds since earthquake origin')
 
         plt.savefig('{}/{}.{}'.format(PATH,EventID,self.plot_info['EventPlot']['Save Type']))
-
+        plt.clf();plt.close('all')
 
     def CataloguePlot(self,filepath=None,Events=None,Stations=None,user_xmin=[None,None,None],user_xmax=[None,None,None], Faults=None):
 
@@ -890,7 +968,6 @@ class HypoSVI(torch.nn.Module):
         # - Catalogue Plot parameters
         min_phases            = self.plot_info['CataloguePlot']['Minimum Phase Picks']
         max_uncertainty       = self.plot_info['CataloguePlot']['Maximum Location Uncertainty (km)']
-        num_std               =  self.plot_info['CataloguePlot']['Num Std to define errorbar']
         event_marker          = self.plot_info['CataloguePlot']['Event Info - [Size, Color, Marker, Alpha]']
         event_errorbar_marker = self.plot_info['CataloguePlot']['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]']
         stations_plot         = self.plot_info['CataloguePlot']['Station Marker - [Size,Color,Names On/Off(Bool)]'] 
@@ -951,9 +1028,6 @@ class HypoSVI(torch.nn.Module):
 
 
         picks_df         = self.Events2CSV()
-        picks_df['ErrX'] = picks_df['StdX']*num_std
-        picks_df['ErrY'] = picks_df['StdY']*num_std
-        picks_df['ErrZ'] = picks_df['StdZ']*num_std
         picks_df         = picks_df[np.sum(picks_df[['ErrX','ErrY','ErrZ']],axis=1) <= max_uncertainty].reset_index(drop=True)
 
         # # Plotting Location info
