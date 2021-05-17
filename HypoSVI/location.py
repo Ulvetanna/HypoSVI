@@ -233,10 +233,10 @@ class HypoSVI(torch.nn.Module):
         self.location_info['Log-likehood']                         = 'LAP'      
         self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] = [0.1,0.1,2.0] 
         self.location_info['Individual Event Epoch Save and Print Rate'] = [None,False]
-        self.location_info['Number of Particles']                  = 150 
+        self.location_info['Number of Particles']                  = 500 
         self.location_info['Step Size']                            = 1
         self.location_info['Save every * events']                  = 100
-        self.location_info['Location Uncertainty Percentile (%)']  = 99.5
+        self.location_info['Location Uncertainty Percentile (%)']  = 99.95
 
         # Depricated values
         self.location_info['Hypocenter Cluster - Seperation (km)'] = None     
@@ -290,7 +290,7 @@ class HypoSVI(torch.nn.Module):
         
         # ----- Kernel Information ----
         self.K             = RBF()
-        self.K.sigma       = 1.5
+        self.K.sigma       = None
         self.K.print_sigma = False
 
         # --- Variables that are updated in run-time
@@ -669,7 +669,6 @@ class HypoSVI(torch.nn.Module):
                 else:
                     indx    = np.arange(X_src.shape[0])
 
-
                 pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
                 try:
                     # kde     = stats.gaussian_kde(pts,bw_method='silverman')
@@ -680,11 +679,14 @@ class HypoSVI(torch.nn.Module):
 
                     import matplotlib.pyplot as plt
                     from scipy import stats
-                    from sklearn.covariance import MinCovDet
-                    robust_cov       = MinCovDet().fit(np.transpose(pts))
-                    std  = np.sqrt(np.diag(abs(robust_cov.covariance_)))
-                    hyp  = robust_cov.location_
-                    err  = stats.norm.ppf(self.location_info['Location Uncertainty Percentile (%)']/100)*std
+                    from sklearn.covariance import EmpiricalCovariance,MinCovDet
+                    robust_cov  = MinCovDet().fit(np.transpose(pts))
+                    hyp         = robust_cov.location_
+                    percentile  = abs(np.sqrt(abs(robust_cov.covariance_))*stats.norm.ppf(self.location_info['Location Uncertainty Percentile (%)']/100))
+                    err         = np.array([np.sum(np.dot(abs(percentile),[1,0,0])),
+                                            np.sum(np.dot(abs(percentile),[0,1,0])),
+                                            np.sum(np.dot(abs(percentile),[0,0,1]))])
+
 
                 except:
                     print('Earthquake particle locations failed to converge - kernel density failure')
@@ -696,6 +698,7 @@ class HypoSVI(torch.nn.Module):
                 Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
                 Ev['location']['Hypocentre']               = (hyp).tolist()
                 Ev['location']['HypocentreError']          = np.array([err[0],err[1],err[2]]).tolist()
+                Ev['location']['Covariance']               = robust_cov.covariance_.tolist()
 
                 # -- Determining the origin time and pick times
                 originOffset,originOffset_std,pick_TD        = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
