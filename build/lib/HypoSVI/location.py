@@ -48,44 +48,17 @@ from sklearn.cluster import DBSCAN
 pd.options.mode.chained_assignment = None  # default='warn'
 
 class RBF(torch.nn.Module):
-
-    """Radial Basis Function (RBF)
-
-    If the class has public attributes, they may be documented here
-    in an ``Attributes`` section and follow the same formatting as a
-    function's ``Args`` section. Alternatively, attributes may be documented
-    inline with the attribute's declaration (see __init__ method below).
-
-    Properties created with the ``@property`` decorator should be documented
-    in the property's getter method.
-
-    Args:
-        sigma (:obj:`bool`, optional): Radial Basis Function Sigma Value 
-
-    Attributes:
-        sigma       (:obj:`float`): Radial Basis Function Sigma Value
-        print_sigma (:obj:`bool`, optional): Description of `attr2`.
-
-    """
+    ''' 
+        Radial Basis Function (RBF) 
 
 
+    '''
     def __init__(self, sigma=None):
         super(RBF, self).__init__()
         self.sigma = sigma
         self.print_sigma = False
 
     def forward(self, X, Y):
-        """ Forward Pass of the Radial Basis Function
-
-
-
-            Args
-                X (:obj:`torch.tensor`) - 
-                Y (:obj:`torch.tensor`) -
-
-        """
-
-
         XX = X.matmul(X.t())
         XY = X.matmul(Y.t())
         YY = Y.matmul(Y.t())
@@ -216,179 +189,6 @@ def IO_JSON2CSV(EVT,savefile=None):
 
 # =========== MAIN =======
 class HypoSVI(torch.nn.Module):
-    """HypoSVI - Hypocentral Earthquake Location using Stein Variational Inferance and Physics Informed Neural Networks
-
-        Earthquake location class that leverages Physics Informed Neural Networks and Stein Variational Inference to return
-        non-gridded earthquake location within continious three-dimensional travel-time models defined using EikoNet.
-
-        Args:
-            EikoNet (:obj:`list`): List of trained EikoNet Classes.
-            Phases (:obj:`list`, optional): List of the Phases that the EikoNets correspond to. Default ['P','S']
-            device (:obj:`list`, optional): Device to run the computation on e.g. 'cpu', 'cuda:0', 'cuda:1'. Default 'cpu'
-
-        Travel-Time and Grid Attributes:
-            eikonet_phase (:obj:`list`): List of the Phases that the EikoNets correspond to. Defined in __init__ during setup.
-            eikonet_models (:obj:`list`): List of the EikoNet classes. Defined in __init__ during setup.
-            VelocityClass (:obj: ' '): Definition of the velocity structure
-            projection (:obj: 'Pyproj.Proj'): Definition of the projection converting EikoNet and recovered locations 
-                                              from a projection of the users choice to a local UTM coordinate system
-            xmin (:obj: 'float'): Definition of the upper S-W point of the region of interest.
-            xmax (:obj: 'float'): Definition of the lower N-E point of the region of interest.
-            device (:obj: 'string'): evice to run the computation on e.g. 'cpu', 'cuda:0', 'cuda:1'. Default 'cpu'. Defined as input to HypoSVI.
-
-
-        Earthquake Location Attributes:
-
-            location_info (:obj:`dict`): Dictionary describing all the information used in the inversion for the earthquake location. These include;
-
-                ======> ['Log-likehood'] (:obj:`string`): Default = 'LAP'
-                                                    The Log-likehood function used in the inversion. 
-                                                    Options: ``LAP`` = Laplacian Differential Time or ``EDT`` Equal Differential Time
-                ======> ['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'] (:obj:`arr`): Default =[0.1,0.1,2.0]:
-                                                    Addition of travel-time uncertainty (s) into the inversion for the earthquake location. 
-                                                    The uncertainty added is between values ``Min(s)`` and ``Max(s)``, with the the value changing with travel-time by
-                                                    gradient ``Gradient(km/s)``
-                ======> ['Individual Event Epoch Save and Print Rate'] (:obj:`arr`): Default = [None,False]
-                                                                        Defining whether to output the particle locations of individual epochs for each earthquake location 
-                                                                        First entry of the array determines the rate at which to save particle location. e.g. Every 10 epochs = 10. Default = ``None``
-                                                                        Second entry of array is a boolean defining if the individual epoch particle locations should be saved. Default = ``None``
-
-
-                ======> ['Number of Particles'] (:obj:`int`): Default ``150``
-                                                              Number of particles that are inverted to determine the posterior of the hypocentral locaition.
-                                                              This value may vary depening on the usecase problem as more complex posterior spaces would require
-                                                              more particles
-
-
-                ======> ['Step Size'] (:obj:`float`): Default ``1``
-                                                      Stepsize for the update used in the optimization of the particle locations. 
-
-
-                ======> ['Save every * events'] (:obj:`int`): Default ``100``
-                                                              The rate at which to append the events to the save JSON catalogue. 
-                                                              If this value is too small then processing could be bottlenecked by appending to file.
-
-
-                ======> ['Location Uncertainty Percentile (%)']: Default ``99.5``
-                                                                 The percentile of the posterior space to be used for the location uncertainty.
-
-
-
-            K (:obj:`class`): Kernel function to used in the Stein Variational Gradient Descent. 
-                              Default is a Radial Basis Function ``RBF()`` with the variance automatically defined ``K.sigma = None`` and
-                              no printing of the changing variance ``K.print_sigma = False``
-
-
-
-        Automated Plot Attributes:
-
-            plot_info (:obj:`dict`): Dictionary describing all the information used in the automated plotting of event and catalogue plots. These include;
-
-                ======> ['EventPlot']: Dictionary descibing the information used for the plotting of individual events with location uncertainty and waveform data
-
-                --------------------->  ['Domain Distance'] (:obj:`float`): Default ``None``
-                                                                           Distance in km +/- relative to the earthquake location to plot. 
-                                                                           If ``None`` whole region specified by the EikoNets will be plot.
-
-                --------------------->  ['Save Type'] (:obj:`string`): Default ``png``
-                                                                      Save type for the event plots. e.g. png,pdf,svg,eps
-
-                --------------------->  ['Figure Size Scale'] (:obj:`float`): Default ``1.0``
-                                                                             Scaling factor to increase on decrease the overall plot size.
-
-                --------------------->  ['Plot kde'] (:obj:`bool`): Default ``True``
-                                                                   Whether to plot the kernel density estimation of the particle location, which would 
-                                                                   represent the posterior of the earthquake locations.
-
-                --------------------->  ['Legend'] (:obj:`arr`): Default ``True``
-                                                                Whether to plot the legend for the event plot
-
-                --------------------->  ['NonClusterd SVGD'] (:obj:`arr`): Default ``[0.5,'k']``
-                                                                          DEPRICATED ONLY USE IF USING DBSCAN CLUSTERING
-                                                                          Defines the size and colour of the particle locations for the Non-clustered particle locations
-
-                --------------------->  ['Clusterd SVGD'] (:obj:`arr`): Default ``[0.5,'k']``
-                                                              DEPRICATED ONLY USE IF USING DBSCAN CLUSTERING
-                                                              Defines the size and colour of the particle locations for the clustered particle locations
-
-
-                --------------------->  ['Stations'] (:obj:`dict`): Dictionary descibing information about the plotting of the station locations
-
-                                        ['Stations']['Plot Stations'] (:obj:`bool`): Default ``True``
-                                                                                    Whether to plot the station locations on event plots
-
-                                        ['Stations']['Station Names'] (:obj:`bool`): Default ``True``
-                                                                                    Whether to plot the station names on the event plots
-
-                                        ['Stations']['Marker Color'] (:obj:`string`): Default ``b``
-                                                                                    The colour which to plot the station locations.
-
-                                        ['Stations']['Marker Size'] (:obj:`float`): Default ``23``
-                                                                                    The marker size for the station locations.
-
-
-                --------------------->  ['Traces'] (:obj:`dict`): Dictionary descibing information about the plotting traces on event plots
-                                       
-                                        ['Traces']['Plot Traces'] (:obj:`bool`): Default ``True``
-                                                                                Whether to plot the seismic traces on the event plots
-
-                                        ['Traces']['Trace Host'] (:obj:`str`): Default ``None``
-                                                                               Path to the seismic trace host e.g. /PATH/TO/FOLDER 
-
-                                        ['Traces']['Trace Host Type'] (:obj:`str`): Default ``'/YEAR/JD/*ST*'``
-                                                                                   Format of the seismic trace host. These include
-                                                                                        ``'/YEAR/JD/*ST*'`` - Year, Julian Day, station nested folders
-                                                                                        ``EQTransformer``   - Format of the autogenerated folders from EQTransformer
-
-                                        ['Traces']['Channel Types'] (:obj:`arr`): Default ``['EH*','HH*']``
-                                                                                Format for the components of the traces which you wish to plot
-
-
-                                        ['Traces']['Filter Freq'] (:obj:`arr`): Default ``[2,16]``
-                                                                               Low frequency and High frequency to which the seismic traces will be bandpassed.
-
-                                        ['Traces']['Normalisation Factor'] (:obj:`float`): Default ``1.0``
-                                                                                           Normalization scaling factor to which you want to apply to all traces.
-
-                                        ['Traces']['Time Bounds'] (:obj:`arr`): Default ``[0,5]``
-                                                                                Time before the origin time and time after the last pick respectively 
-                                                                                to which the data is load.
-
-                                        ['Traces']['Pick linewidth'] (:obj:`float`): Default ``2.0``
-                                                                                     Thickness of the pick linewidth
-
-
-                                        ['Traces']['Trace linewidth'] (:obj:`float`): Default ``1.0``
-                                                                                     Thickness of the seismic trace linewidth
-
-
-
-                ======> ['CataloguePlot']: Dictionary descibing the information used for the plotting of whole catalogue and location uncertainties
-
-                --------------------->  ['Minimum Phase Picks'] (:obj:`int`): Default ``12``
-                                                                             Minimum number of event picks for the event to be plot in the catalogue plot
-
-              
-                --------------------->  ['Maximum Location Uncertainty (km)'] (:obj:`float`): Default ``15``
-                                                                             Maximum total location uncertainty for the event to be plot in the catalogue plot                                                              
-
-                --------------------->  ['Event Info - [Size, Color, Marker, Alpha]'] (:obj:`arr`): Default ``[0.1,'r','*',0.8]``
-                                                                                                    Information describing how to plot the event location.
-                                                                                                    [Marker Size,Marker color, Marker Symbol, Opacity Alpha] resectively
-
-                --------------------->  ['Event Errorbar - [On/Off(Bool),Linewidth,Color,Alpha]'] (:obj:`arr`): Default ``[True,0.1,'r',0.8]``
-                                                                                                    Information describing how/whether to plot the event errorbars.
-                                                                                                    [On/Off,Errorbar Linewidth, Errorbar Colour, Errorbar Opacity Alpha] resectively
-
-
-                --------------------->  ['Station Marker - [Size,Color,Names On/Off(Bool)]'] (:obj:`arr`): Default ``[15,'b',True]``
-                                                                                                    Information describing how to plot the stations.
-                                                                                                    [Station Marker Size, Station Marker Colour,On/Off Station Names] resectively
-
-
-    
-    """
-
     def __init__(self, EikoNet, Phases=['P','S'], device='cpu'):
         super(HypoSVI, self).__init__()
 
@@ -436,7 +236,7 @@ class HypoSVI(torch.nn.Module):
         self.location_info['Number of Particles']                  = 150 
         self.location_info['Step Size']                            = 1
         self.location_info['Save every * events']                  = 100
-        self.location_info['Location Uncertainty Percentile (%)']  = 95.0
+        self.location_info['Location Uncertainty Percentile (%)']  = 99.5
 
         # Depricated values
         self.location_info['Hypocenter Cluster - Seperation (km)'] = None     
@@ -490,7 +290,7 @@ class HypoSVI(torch.nn.Module):
         
         # ----- Kernel Information ----
         self.K             = RBF()
-        self.K.sigma       = None
+        self.K.sigma       = 1.5
         self.K.print_sigma = False
 
         # --- Variables that are updated in run-time
@@ -500,14 +300,7 @@ class HypoSVI(torch.nn.Module):
 
     def locVar(self,T_obs,T_obs_err):
         '''
-            Variance of the observations used for the inverison procedure
-            
-            Applying variance from Pick and travel-time percentage weighting to each of the observtions
-
-            Args:
-                T_obs (:obj:`torch.tensor`): The observational arrival times
-                T_obs_err (:obj:`torch.tensor`): The pick standard-deviation in the observational arrival times 
-        
+            Applying variance from Pick and Distance weighting to each of the observtions
         '''                
         # Intialising a variance of the LOCGAU2 settings
         self._σ_T  = torch.clamp(T_obs*self.location_info['Travel Time Uncertainty - [Gradient(km/s),Min(s),Max(s)]'][0],
@@ -519,18 +312,6 @@ class HypoSVI(torch.nn.Module):
         self._σ_T  = torch.sqrt(self._σ_T)
                 
     def log_L(self, T_pred, T_obs, σ_T):
-        '''
-            Log-Likelihood estimation from the observated travel-times, predicted travel-times
-            and the variance of each of the observational data
-
-            Args:
-                T_pred (:obj:`torch.tensor`): Predicted travel-times detemined as output from the EikoNet models
-                T_obs (:obj:`torch.tensor`): The observational arrival times
-                T_obs_err (:obj:`torch.tensor`): The pick standard-deviation in the observational arrival times 
-
-        '''
-
-
         if self.location_info['Log-likehood'] == 'EDT':
             from itertools import combinations
             pairs     = combinations(np.arange(T_obs.shape[1]), 2)
@@ -540,7 +321,6 @@ class HypoSVI(torch.nn.Module):
             σ_T       = ((σ_T[:,pairs[:,0]])**2 + (σ_T[:,pairs[:,1]])**2)
             logL      = torch.exp((-(dT_obs-dT_pred)**2)/(σ_T))*(1/torch.sqrt(σ_T))
             logL      = torch.sum(logL,dim=1)
-            logL      = torch.log(logL)
             logL      = logL.sum()
 
         if self.location_info['Log-likehood'] == 'LAP':
@@ -889,29 +669,22 @@ class HypoSVI(torch.nn.Module):
                 else:
                     indx    = np.arange(X_src.shape[0])
 
+
                 pts     = np.transpose(X_src[indx,:].detach().cpu().numpy())
                 try:
-                    print(pts.shape)
-                    kde         = stats.gaussian_kde(pts,'silverman')
-                    pdf         = kde(pts)
-                    percentile  = abs(np.sqrt(abs(kde.covariance))*stats.norm.ppf(self.location_info['Location Uncertainty Percentile (%)']/100))
-                    err         = [percentile[0,0],percentile[1,1],percentile[2,2]]
-                    hyp         = pts[:,np.argmax(pdf)]
+                    # kde     = stats.gaussian_kde(pts,bw_method='silverman')
+                    # pdf     = kde(pts)
+                    # cov     = np.sqrt(abs(np.cov(pts)))
+                    # hyp     = pts[:,np.argmax(pdf)]
 
 
-                    # import matplotlib.pyplot as plt
-                    # from scipy import stats
-                    # from sklearn.covariance import EmpiricalCovariance,MinCovDet
-                    # robust_cov  = MinCovDet().fit(np.transpose(pts))
-                    # hyp         = robust_cov.location_
-                    # percentile  = abs(np.sqrt(abs(robust_cov.covariance_))*stats.norm.ppf(self.location_info['Location Uncertainty Percentile (%)']/100))
-                    # err         = np.array([np.sum(np.dot(abs(percentile),[1,0,0])),
-                    #                         np.sum(np.dot(abs(percentile),[0,1,0])),
-                    #                         np.sum(np.dot(abs(percentile),[0,0,1]))])
-
-
-
-
+                    import matplotlib.pyplot as plt
+                    from scipy import stats
+                    from sklearn.covariance import MinCovDet
+                    robust_cov       = MinCovDet().fit(np.transpose(pts))
+                    std  = np.sqrt(np.diag(abs(robust_cov.covariance_)))
+                    hyp  = robust_cov.location_
+                    err  = stats.norm.ppf(self.location_info['Location Uncertainty Percentile (%)']/100)*std
 
                 except:
                     print('Earthquake particle locations failed to converge - kernel density failure')
@@ -923,7 +696,6 @@ class HypoSVI(torch.nn.Module):
                 Ev['location']['SVGD_points_clusterindx']  = indx.tolist()
                 Ev['location']['Hypocentre']               = (hyp).tolist()
                 Ev['location']['HypocentreError']          = np.array([err[0],err[1],err[2]]).tolist()
-                Ev['location']['Covariance']               = kde.covariance.tolist()
 
                 # -- Determining the origin time and pick times
                 originOffset,originOffset_std,pick_TD        = self._compute_origin(T_obs,T_obs_phase,X_rec,Tensor(Ev['location']['Hypocentre']).to(self.device))
@@ -1051,9 +823,9 @@ class HypoSVI(torch.nn.Module):
 
         # Plotting the kde representation of the scatter data
         if self.plot_info['EventPlot']['Plot kde']:
-            sns.kdeplot(x=locs[indx_cluster,0],y=locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1,gridsize=500,bw_method='silverman')
-            sns.kdeplot(x=locs[indx_cluster,0],y=locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1,gridsize=500,bw_method='silverman')
-            sns.kdeplot(x=locs[indx_cluster,2],y=locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1,gridsize=500,bw_method='silverman')
+            sns.kdeplot(x=locs[indx_cluster,0],y=locs[indx_cluster,1], cmap="Reds",ax=xy,zorder=-1,gridsize=500,bw_method=0.25)
+            sns.kdeplot(x=locs[indx_cluster,0],y=locs[indx_cluster,2], cmap="Reds",ax=xz,zorder=-1,gridsize=500,bw_method=0.25)
+            sns.kdeplot(x=locs[indx_cluster,2],y=locs[indx_cluster,1], cmap="Reds",ax=yz,zorder=-1,gridsize=500,bw_method=0.25)
 
         # Plotting the SVGD samples
         xy.scatter(locs[:,0],locs[:,1],float(self.plot_info['EventPlot']['NonClusterd SVGD'][0]),str(self.plot_info['EventPlot']['NonClusterd SVGD'][1]),label='SVGD Samples')
