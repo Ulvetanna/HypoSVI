@@ -540,6 +540,7 @@ class HypoSVI(torch.nn.Module):
             σ_T       = ((σ_T[:,pairs[:,0]])**2 + (σ_T[:,pairs[:,1]])**2)
             logL      = torch.exp((-(dT_obs-dT_pred)**2)/(σ_T))*(1/torch.sqrt(σ_T))
             logL      = torch.sum(logL,dim=1)
+            logL      = torch.log(logL)
             logL      = logL.sum()
 
         if self.location_info['Log-likehood'] == 'LAP':
